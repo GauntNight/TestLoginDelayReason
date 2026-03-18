@@ -927,7 +927,7 @@
           description: 'Local Security Authority validates credentials against the local SAM database.',
           normalDuration: { min: 100, max: 500, unit: 'ms' },
           delayedDuration: { min: 2, max: 15, unit: 'seconds' },
-          delayRisk: 'medium',
+          delayRisk: 'low',
           rootCauses: [
             {
               title: 'High CPU or RAM usage during authentication',
@@ -1002,9 +1002,9 @@
           id: 'local-user-profile-load',
           name: 'User Profile Load',
           description: 'Windows loads the user profile (NTUSER.DAT registry hive and profile folders) from disk.',
-          normalDuration: { min: 500, max: 3, unit: 'seconds' },
+          normalDuration: { min: 500, max: 3000, unit: 'ms' },
           delayedDuration: { min: 5, max: 60, unit: 'seconds' },
-          delayRisk: 'high',
+          delayRisk: 'medium',
           rootCauses: [
             {
               title: 'Large user profile',
@@ -1041,9 +1041,9 @@
           id: 'local-group-policy',
           name: 'Group Policy (Local)',
           description: 'Local Group Policy objects are applied to the user session.',
-          normalDuration: { min: 200, max: 2, unit: 'seconds' },
+          normalDuration: { min: 200, max: 2000, unit: 'ms' },
           delayedDuration: { min: 5, max: 30, unit: 'seconds' },
-          delayRisk: 'medium',
+          delayRisk: 'high',
           rootCauses: [
             {
               title: 'Complex local policies with WMI filters',
@@ -1074,7 +1074,7 @@
           description: 'Windows Explorer shell (explorer.exe) starts, loading the desktop, taskbar, and system tray.',
           normalDuration: { min: 1, max: 5, unit: 'seconds' },
           delayedDuration: { min: 10, max: 60, unit: 'seconds' },
-          delayRisk: 'high',
+          delayRisk: 'medium',
           rootCauses: [
             {
               title: 'Shell extensions and context menu handlers',
@@ -1106,7 +1106,7 @@
           description: 'Applications configured to run at login are launched (Run keys, Startup folder, scheduled tasks).',
           normalDuration: { min: 2, max: 10, unit: 'seconds' },
           delayedDuration: { min: 15, max: 120, unit: 'seconds' },
-          delayRisk: 'high',
+          delayRisk: 'critical',
           rootCauses: [
             {
               title: 'Too many startup programs',
@@ -1146,13 +1146,21 @@
           description: 'Desktop is fully loaded and responsive — the user can begin working.',
           normalDuration: { min: 0, max: 2, unit: 'seconds' },
           delayedDuration: { min: 5, max: 30, unit: 'seconds' },
-          delayRisk: 'low',
+          delayRisk: 'medium',
           rootCauses: [
             {
               title: 'Background processes still initializing',
               description: 'Desktop appears but remains sluggish while background tasks complete.',
               diagnosticCommands: [
                 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64'
+              ]
+            },
+            {
+              title: 'Disk thrashing from concurrent I/O',
+              description: 'Multiple startup programs and services perform heavy disk I/O simultaneously, delaying desktop responsiveness.',
+              diagnosticCommands: [
+                'Get-Counter "\\PhysicalDisk(_Total)\\% Disk Time"',
+                'Get-Counter "\\PhysicalDisk(_Total)\\Current Disk Queue Length"'
               ]
             }
           ],
@@ -1293,7 +1301,7 @@
           description: 'Client sends an Authentication Service Request to the KDC (Key Distribution Center) on the domain controller.',
           normalDuration: { min: 50, max: 300, unit: 'ms' },
           delayedDuration: { min: 5, max: 30, unit: 'seconds' },
-          delayRisk: 'critical',
+          delayRisk: 'high',
           rootCauses: [
             {
               title: 'Clock skew exceeds 5-minute Kerberos tolerance',
@@ -1397,7 +1405,7 @@
           description: 'Windows creates an access token containing domain user SID, all group SIDs, and privileges.',
           normalDuration: { min: 50, max: 300, unit: 'ms' },
           delayedDuration: { min: 1, max: 10, unit: 'seconds' },
-          delayRisk: 'medium',
+          delayRisk: 'low',
           rootCauses: [
             {
               title: 'Token bloat from excessive group memberships',
@@ -1427,7 +1435,7 @@
           id: 'domain-user-profile-load',
           name: 'User Profile Load',
           description: 'User profile is loaded — for roaming profiles, this includes downloading the profile from a network share.',
-          normalDuration: { min: 500, max: 5, unit: 'seconds' },
+          normalDuration: { min: 500, max: 5000, unit: 'ms' },
           delayedDuration: { min: 10, max: 300, unit: 'seconds' },
           delayRisk: 'critical',
           rootCauses: [
@@ -1467,7 +1475,7 @@
           id: 'domain-folder-redirection',
           name: 'Folder Redirection',
           description: 'Redirected folders (Documents, Desktop, AppData) are mapped to network locations via Group Policy.',
-          normalDuration: { min: 200, max: 2, unit: 'seconds' },
+          normalDuration: { min: 200, max: 2000, unit: 'ms' },
           delayedDuration: { min: 5, max: 60, unit: 'seconds' },
           delayRisk: 'high',
           rootCauses: [
@@ -1543,7 +1551,7 @@
           description: 'Logon scripts (batch files, VBScript, PowerShell) assigned via GPO or user properties are executed.',
           normalDuration: { min: 1, max: 10, unit: 'seconds' },
           delayedDuration: { min: 15, max: 120, unit: 'seconds' },
-          delayRisk: 'high',
+          delayRisk: 'critical',
           rootCauses: [
             {
               title: 'Long-running logon scripts',
@@ -1608,7 +1616,7 @@
           description: 'Windows Explorer shell starts, loading the desktop, taskbar, system tray, and any deployed shortcuts.',
           normalDuration: { min: 1, max: 5, unit: 'seconds' },
           delayedDuration: { min: 10, max: 60, unit: 'seconds' },
-          delayRisk: 'high',
+          delayRisk: 'medium',
           rootCauses: [
             {
               title: 'Shell extensions and context menu handlers',
@@ -1640,7 +1648,7 @@
           description: 'Applications configured to run at login launch, including those deployed via GPO software installation.',
           normalDuration: { min: 2, max: 10, unit: 'seconds' },
           delayedDuration: { min: 15, max: 120, unit: 'seconds' },
-          delayRisk: 'high',
+          delayRisk: 'critical',
           rootCauses: [
             {
               title: 'Too many startup programs (local + GPO-deployed)',
@@ -1673,13 +1681,21 @@
           description: 'Desktop is fully loaded, all drives/printers mapped, and the user environment is responsive.',
           normalDuration: { min: 0, max: 2, unit: 'seconds' },
           delayedDuration: { min: 5, max: 30, unit: 'seconds' },
-          delayRisk: 'low',
+          delayRisk: 'medium',
           rootCauses: [
             {
               title: 'Background processes still initializing',
               description: 'Desktop appears but remains sluggish while background sync, updates, and agents complete.',
               diagnosticCommands: [
                 'Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64'
+              ]
+            },
+            {
+              title: 'Windows Update or SCCM client performing post-login tasks',
+              description: 'Update agents scan for and download updates immediately after login, consuming bandwidth and CPU.',
+              diagnosticCommands: [
+                'Get-Service wuauserv | Select-Object Status, StartType',
+                'Get-WinEvent -LogName "Microsoft-Windows-WindowsUpdateClient/Operational" -MaxEvents 5 | Select-Object TimeCreated, Message'
               ]
             }
           ],
@@ -1717,9 +1733,6 @@
      */
     function formatDuration(min, max, unit) {
       var displayUnit = unit === 'ms' ? 'ms' : 's';
-      if (unit === 'seconds' && min >= 100) {
-        return min + 'ms – ' + max + 's';
-      }
       return min + ' – ' + max + ' ' + displayUnit;
     }
 
@@ -2110,6 +2123,11 @@
         }
       }
     }, true);
+
+    // Expand all details panels for print
+    window.addEventListener('beforeprint', function() {
+      document.querySelectorAll('.step__details').forEach(function(d) { d.open = true; });
+    });
 
     /* ========================================
        Initialization
