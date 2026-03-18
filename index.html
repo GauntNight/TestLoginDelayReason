@@ -1,0 +1,2144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Windows Login Flow Diagnostic Tool - Visualize and diagnose login delays for local and domain-joined logins">
+  <title>Windows Login Flow &amp; Delay Diagnosis</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='13' height='13' fill='%230078d4'/><rect x='17' y='2' width='13' height='13' fill='%230078d4'/><rect x='2' y='17' width='13' height='13' fill='%230078d4'/><rect x='17' y='17' width='13' height='13' fill='%230078d4'/></svg>">
+  <style>
+    /* ========================================
+       CSS Custom Properties (Theming)
+       ======================================== */
+    :root {
+      /* Risk colors */
+      --color-risk-none: #10b981;
+      --color-risk-low: #22c55e;
+      --color-risk-medium: #f59e0b;
+      --color-risk-high: #ef4444;
+      --color-risk-critical: #991b1b;
+
+      /* Risk background (lighter variants) */
+      --color-risk-none-bg: #d1fae5;
+      --color-risk-low-bg: #dcfce7;
+      --color-risk-medium-bg: #fef3c7;
+      --color-risk-high-bg: #fee2e2;
+      --color-risk-critical-bg: #fecaca;
+
+      /* Brand / UI colors */
+      --color-primary: #0078d4;
+      --color-primary-hover: #005a9e;
+      --color-bg: #f8fafc;
+      --color-surface: #ffffff;
+      --color-border: #e2e8f0;
+      --color-text: #1e293b;
+      --color-text-secondary: #64748b;
+      --color-text-muted: #94a3b8;
+
+      /* Info callout */
+      --color-info: #3b82f6;
+      --color-info-bg: #eff6ff;
+      --color-info-border: #bfdbfe;
+
+      /* Spacing scale */
+      --space-xs: 0.25rem;
+      --space-sm: 0.5rem;
+      --space-md: 1rem;
+      --space-lg: 1.5rem;
+      --space-xl: 2rem;
+      --space-2xl: 3rem;
+
+      /* Typography */
+      --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      --font-size-xs: 0.75rem;
+      --font-size-sm: 0.875rem;
+      --font-size-base: 1rem;
+      --font-size-lg: 1.125rem;
+      --font-size-xl: 1.25rem;
+      --font-size-2xl: 1.5rem;
+      --font-size-3xl: 1.875rem;
+
+      /* Border radius */
+      --radius-sm: 0.25rem;
+      --radius-md: 0.5rem;
+      --radius-lg: 0.75rem;
+
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+      /* Layout */
+      --max-width: 960px;
+      --header-height: auto;
+    }
+
+    /* ========================================
+       Base / Reset
+       ======================================== */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      font-size: 16px;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-family);
+      font-size: var(--font-size-base);
+      color: var(--color-text);
+      background-color: var(--color-bg);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ========================================
+       Focus Indicators (Accessibility)
+       ======================================== */
+    :focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
+    }
+
+    :focus:not(:focus-visible) {
+      outline: none;
+    }
+
+    /* ========================================
+       Layout (CSS Grid)
+       ======================================== */
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-height: 100vh;
+    }
+
+    .app__header {
+      background-color: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: var(--shadow-sm);
+      padding: var(--space-lg) var(--space-xl);
+    }
+
+    .app__header-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .app__title {
+      font-size: var(--font-size-2xl);
+      font-weight: 700;
+      color: var(--color-primary);
+    }
+
+    .app__subtitle {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+    }
+
+    .app__main {
+      max-width: var(--max-width);
+      width: 100%;
+      margin: 0 auto;
+      padding: var(--space-xl);
+    }
+
+    .app__footer {
+      background-color: var(--color-surface);
+      border-top: 1px solid var(--color-border);
+      padding: var(--space-md) var(--space-xl);
+      text-align: center;
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+    }
+
+    /* ========================================
+       Navigation / Tabs
+       ======================================== */
+    .nav {
+      display: flex;
+      gap: var(--space-sm);
+      margin-top: var(--space-md);
+    }
+
+    .nav__tab {
+      padding: var(--space-sm) var(--space-lg);
+      border: 2px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+      cursor: pointer;
+      font-size: var(--font-size-sm);
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      transition: all 0.2s ease;
+    }
+
+    .nav__tab:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+
+    .nav__tab--active {
+      background-color: var(--color-primary);
+      border-color: var(--color-primary);
+      color: #ffffff;
+    }
+
+    .nav__tab--active:hover {
+      background-color: var(--color-primary-hover);
+      color: #ffffff;
+    }
+
+    /* ========================================
+       Summary Dashboard
+       ======================================== */
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: var(--space-md);
+      margin-bottom: var(--space-xl);
+    }
+
+    .summary__card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-lg);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .summary__label {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    .summary__value {
+      font-size: var(--font-size-2xl);
+      font-weight: 700;
+      margin-top: var(--space-xs);
+    }
+
+    /* ========================================
+       Timeline
+       ======================================== */
+    .timeline {
+      position: relative;
+      padding-left: var(--space-xl);
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 0.5rem;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background-color: var(--color-border);
+    }
+
+    .timeline__step {
+      position: relative;
+      margin-bottom: var(--space-lg);
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-lg);
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .timeline__step::before {
+      content: '';
+      position: absolute;
+      left: calc(-1 * var(--space-xl) + 0.25rem);
+      top: var(--space-lg);
+      width: 0.625rem;
+      height: 0.625rem;
+      border-radius: 50%;
+      background-color: var(--color-primary);
+      border: 2px solid var(--color-surface);
+    }
+
+    .timeline__step--flagged {
+      border-color: var(--color-risk-high);
+      box-shadow: var(--shadow-md);
+    }
+
+    /* ========================================
+       Step Card Content
+       ======================================== */
+    .step__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: var(--space-sm);
+    }
+
+    .step__name {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+    }
+
+    .step__number {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      font-weight: 600;
+    }
+
+    .step__description {
+      color: var(--color-text-secondary);
+      font-size: var(--font-size-sm);
+      margin-top: var(--space-sm);
+    }
+
+    .step__meta {
+      display: flex;
+      gap: var(--space-md);
+      margin-top: var(--space-sm);
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .step__duration {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+    }
+
+    /* ========================================
+       Risk Badge
+       ======================================== */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-xs);
+      padding: 0.125rem var(--space-sm);
+      border-radius: 9999px;
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .badge--none {
+      background-color: var(--color-risk-none-bg);
+      color: var(--color-risk-none);
+    }
+
+    .badge--low {
+      background-color: var(--color-risk-low-bg);
+      color: var(--color-risk-low);
+    }
+
+    .badge--medium {
+      background-color: var(--color-risk-medium-bg);
+      color: var(--color-risk-medium);
+    }
+
+    .badge--high {
+      background-color: var(--color-risk-high-bg);
+      color: var(--color-risk-high);
+    }
+
+    .badge--critical {
+      background-color: var(--color-risk-critical-bg);
+      color: var(--color-risk-critical);
+    }
+
+    /* ========================================
+       Details / Root Cause Panel
+       ======================================== */
+    .step__details {
+      margin-top: var(--space-md);
+      border-top: 1px solid var(--color-border);
+      padding-top: var(--space-md);
+    }
+
+    .step__details summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: var(--font-size-sm);
+      color: var(--color-primary);
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      user-select: none;
+      padding: var(--space-xs) 0;
+    }
+
+    .step__details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .step__details summary::before {
+      content: '\25B6';
+      font-size: var(--font-size-xs);
+      transition: transform 0.2s ease;
+      display: inline-block;
+    }
+
+    .step__details[open] summary::before {
+      content: '\25BC';
+      font-size: var(--font-size-xs);
+    }
+
+    .step__details-content {
+      overflow: hidden;
+      animation: detailsOpen 0.25s ease-out;
+    }
+
+    @keyframes detailsOpen {
+      from {
+        opacity: 0;
+        max-height: 0;
+        transform: translateY(-8px);
+      }
+      to {
+        opacity: 1;
+        max-height: 2000px;
+        transform: translateY(0);
+      }
+    }
+
+    /* Root cause card */
+    .root-cause {
+      margin-top: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+      border-left: 3px solid var(--color-border);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: var(--color-bg);
+    }
+
+    .root-cause--low {
+      border-left-color: var(--color-risk-low);
+    }
+
+    .root-cause--medium {
+      border-left-color: var(--color-risk-medium);
+    }
+
+    .root-cause--high {
+      border-left-color: var(--color-risk-high);
+    }
+
+    .root-cause--critical {
+      border-left-color: var(--color-risk-critical);
+    }
+
+    .root-cause__title {
+      font-size: var(--font-size-sm);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .root-cause__severity {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .root-cause__severity--low {
+      background-color: var(--color-risk-low);
+    }
+
+    .root-cause__severity--medium {
+      background-color: var(--color-risk-medium);
+    }
+
+    .root-cause__severity--high {
+      background-color: var(--color-risk-high);
+    }
+
+    .root-cause__severity--critical {
+      background-color: var(--color-risk-critical);
+    }
+
+    .root-cause__description {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+    }
+
+    .root-cause__commands {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: var(--space-sm);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-xs);
+      font-family: var(--font-mono);
+      overflow-x: auto;
+      margin-top: var(--space-xs);
+      white-space: pre;
+      line-height: 1.8;
+    }
+
+    .root-cause__commands-label {
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--color-text-muted);
+      margin-top: var(--space-sm);
+      margin-bottom: var(--space-xs);
+    }
+
+    /* Diagnostic tips */
+    .diagnostic-tips {
+      margin-top: var(--space-sm);
+      padding-top: var(--space-sm);
+      border-top: 1px solid var(--color-border);
+    }
+
+    .diagnostic-tips__label {
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--color-text-muted);
+    }
+
+    .diagnostic-tips__list {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+      padding-left: var(--space-lg);
+      list-style-type: disc;
+    }
+
+    .diagnostic-tips__list li {
+      margin-bottom: var(--space-xs);
+    }
+
+    /* ========================================
+       Edge Case Callout (Info Box)
+       ======================================== */
+    .callout {
+      background: var(--color-info-bg);
+      border: 1px solid var(--color-info-border);
+      border-left: 4px solid var(--color-info);
+      border-radius: var(--radius-sm);
+      padding: var(--space-sm) var(--space-md);
+      margin-top: var(--space-sm);
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      line-height: 1.5;
+    }
+
+    .callout__title {
+      font-weight: 700;
+      color: var(--color-info);
+      margin-bottom: var(--space-xs);
+      display: flex;
+      align-items: center;
+      gap: var(--space-xs);
+    }
+
+    /* ========================================
+       Delay Simulator Toggle
+       ======================================== */
+    .step__flag-toggle {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-top: var(--space-sm);
+      padding: var(--space-xs) var(--space-sm);
+      background: var(--color-bg);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      user-select: none;
+      width: fit-content;
+      transition: color 0.2s ease;
+    }
+
+    .step__flag-toggle:hover {
+      color: var(--color-risk-high);
+    }
+
+    .step__flag-toggle input[type="checkbox"] {
+      accent-color: var(--color-risk-high);
+      width: 1rem;
+      height: 1rem;
+      cursor: pointer;
+    }
+
+    .timeline__step--user-flagged {
+      border-color: var(--color-risk-high);
+      border-width: 2px;
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15), var(--shadow-md);
+    }
+
+    .timeline__step--user-flagged .step__flag-toggle {
+      color: var(--color-risk-high);
+    }
+
+    /* ========================================
+       Flagged Delays Summary
+       ======================================== */
+    .flagged-summary {
+      background: var(--color-surface);
+      border: 2px solid var(--color-risk-high);
+      border-radius: var(--radius-lg);
+      padding: var(--space-lg);
+      margin-bottom: var(--space-xl);
+      box-shadow: var(--shadow-md);
+    }
+
+    .flagged-summary__title {
+      font-size: var(--font-size-lg);
+      font-weight: 700;
+      color: var(--color-risk-high);
+      margin-bottom: var(--space-md);
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .flagged-summary__step {
+      margin-bottom: var(--space-md);
+      padding: var(--space-sm) var(--space-md);
+      border-left: 3px solid var(--color-risk-high);
+      background: var(--color-risk-high-bg);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+
+    .flagged-summary__step-name {
+      font-weight: 600;
+      font-size: var(--font-size-sm);
+    }
+
+    .flagged-summary__root-causes {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+      padding-left: var(--space-lg);
+      list-style-type: disc;
+    }
+
+    .flagged-summary__root-causes li {
+      margin-bottom: var(--space-xs);
+    }
+
+    .flagged-summary__commands {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: var(--space-sm);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-xs);
+      font-family: var(--font-mono);
+      overflow-x: auto;
+      margin-top: var(--space-sm);
+      white-space: pre;
+      line-height: 1.8;
+    }
+
+    /* ========================================
+       Utility
+       ======================================== */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
+
+    /* ========================================
+       Responsive: Mobile (375px)
+       ======================================== */
+    @media (max-width: 480px) {
+      .app__header {
+        padding: var(--space-md);
+      }
+
+      .app__main {
+        padding: var(--space-md);
+      }
+
+      .app__title {
+        font-size: var(--font-size-xl);
+      }
+
+      .nav {
+        flex-direction: column;
+      }
+
+      .nav__tab {
+        text-align: center;
+      }
+
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .step__header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .timeline {
+        padding-left: var(--space-lg);
+      }
+    }
+
+    /* ========================================
+       Responsive: Tablet (768px)
+       ======================================== */
+    @media (min-width: 481px) and (max-width: 768px) {
+      .summary {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    /* ========================================
+       Responsive: Desktop (1024px+)
+       ======================================== */
+    @media (min-width: 1024px) {
+      .summary {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    /* ========================================
+       Print Styles
+       ======================================== */
+    @media print {
+      body {
+        background: #ffffff;
+        color: #000000;
+        font-size: 11pt;
+      }
+
+      .app {
+        display: block;
+      }
+
+      .app__header {
+        box-shadow: none;
+        border-bottom: 2px solid #000000;
+        padding: 0.5cm 0;
+      }
+
+      .app__main {
+        padding: 0.5cm 0;
+        max-width: 100%;
+      }
+
+      .app__footer {
+        border-top: 1px solid #000000;
+        padding: 0.25cm 0;
+      }
+
+      /* Hide interactive elements in print */
+      .nav {
+        display: none;
+      }
+
+      .step__flag-toggle {
+        display: none !important;
+      }
+
+      /* Single-column layout */
+      .summary {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .summary__card {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+      }
+
+      .timeline {
+        padding-left: 0;
+      }
+
+      .timeline::before {
+        display: none;
+      }
+
+      .timeline__step {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .timeline__step::before {
+        display: none;
+      }
+
+      /* Force all details open for print */
+      .step__details {
+        display: block !important;
+      }
+
+      .step__details-content {
+        display: block !important;
+        animation: none !important;
+      }
+
+      .step__details summary {
+        pointer-events: none;
+      }
+
+      .step__details summary::before {
+        display: none;
+      }
+
+      .timeline__step--flagged {
+        border-color: #000000;
+        border-width: 2px;
+      }
+
+      /* Callout print styles */
+      .callout {
+        border-left-color: #666;
+        background: #f5f5f5;
+      }
+
+      /* Clean pagination */
+      .flagged-summary {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="Windows Login Flow Diagnostic Tool">
+    <!-- Header -->
+    <header class="app__header">
+      <div class="app__header-inner">
+        <h1 class="app__title">Windows Login Flow &amp; Delay Diagnosis</h1>
+        <p class="app__subtitle">Interactive diagnostic tool for identifying and resolving Windows login delays</p>
+        <nav class="nav" role="tablist" aria-label="Login type selector">
+          <!-- Tabs rendered by JS -->
+        </nav>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="app__main">
+      <!-- Summary Dashboard -->
+      <section class="summary" aria-label="Summary dashboard" id="summary">
+        <!-- Rendered by JS -->
+      </section>
+
+      <!-- Timeline -->
+      <section class="timeline" role="list" aria-label="Login step timeline" id="timeline">
+        <!-- Rendered by JS -->
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app__footer">
+      <p>Windows Login Flow Diagnostic Tool &mdash; For IT administrators and system engineers</p>
+      <p id="footer-date"></p>
+    </footer>
+  </div>
+
+  <script>
+    /* ========================================
+       Data Constants
+       ======================================== */
+
+    /**
+     * Edge case callouts keyed by step ID.
+     * Each maps to an array of { title, text } objects.
+     */
+    var EDGE_CASE_CALLOUTS = {
+      'domain-kerberos-as-req': [
+        {
+          title: 'Cached / Offline Domain Login',
+          text: 'If the domain controller is unreachable, Windows can use cached credentials (last 10-25 logins by default). Kerberos is skipped entirely and NTLM cached logon is used. Group Policy will not refresh and new password changes will not take effect until DC connectivity is restored.'
+        }
+      ],
+      'domain-user-profile-load': [
+        {
+          title: 'First-Time Login (New Profile)',
+          text: 'When a user logs into a machine for the first time, Windows must create a brand-new profile from the Default profile template. This is significantly slower than loading an existing profile and can take 30-90 seconds on HDDs. Subsequent logins will be faster.'
+        },
+        {
+          title: 'Mandatory / Roaming Profile Failures',
+          text: 'Mandatory profiles (.man extension) are read-only and downloaded every login. If the profile share is unreachable, login may fail entirely. Roaming profiles that fail to sync will fall back to a local cached copy, but changes may be lost. Check Event ID 1509/1500 in the Application log.'
+        }
+      ],
+      'domain-secure-channel-verification': [
+        {
+          title: 'VPN / Remote Login',
+          text: 'When connecting via VPN, the secure channel verification depends on VPN tunnel being established first. Always-On VPN (device tunnel) enables pre-logon domain connectivity. Without it, cached credentials are used for initial login, and domain authentication occurs after VPN connects — potentially triggering a second round of GP processing.'
+        }
+      ],
+      'domain-group-policy-processing': [
+        {
+          title: 'Multiple GPOs with WMI Filters',
+          text: 'Each GPO with a WMI filter requires a separate WMI query evaluation. If you have 10+ GPOs with WMI filters, these queries run sequentially and can add 5-30 seconds depending on query complexity and hardware speed. Consider consolidating WMI-filtered GPOs or using Item-Level Targeting in GP Preferences instead.'
+        }
+      ],
+      'local-user-profile-load': [
+        {
+          title: 'First-Time Login (New Profile)',
+          text: 'The first login for a user on a machine creates a new profile from the Default template. This takes significantly longer than subsequent logins as the entire profile structure must be initialized, registry hive created, and default apps provisioned.'
+        }
+      ],
+      'local-group-policy': [
+        {
+          title: 'Multiple GPOs with WMI Filters',
+          text: 'Even local GPOs can contain WMI filters. Each filter evaluation adds latency, especially on older hardware. Use "gpresult /R" to see which GPOs and filters are being evaluated.'
+        }
+      ]
+    };
+
+    const LOGIN_STEPS = {
+      local: [
+        {
+          id: 'local-credential-input',
+          name: 'Credential Input',
+          description: 'User enters username and password on the Windows lock/login screen.',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'none',
+          rootCauses: [],
+          diagnosticTips: ['Ensure keyboard and input devices are responsive.'],
+          isUserAction: true
+        },
+        {
+          id: 'local-lsa-authentication',
+          name: 'LSA Authentication',
+          description: 'Local Security Authority validates credentials against the local SAM database.',
+          normalDuration: { min: 100, max: 500, unit: 'ms' },
+          delayedDuration: { min: 2, max: 15, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'High CPU or RAM usage during authentication',
+              description: 'LSA service competes with other processes for system resources, slowing credential validation.',
+              diagnosticCommands: [
+                'Get-CimInstance Win32_Processor | Select-Object LoadPercentage',
+                'Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize'
+              ]
+            },
+            {
+              title: 'Antivirus scanning LSA operations',
+              description: 'Real-time AV scanning intercepts LSA credential operations causing delays.',
+              diagnosticCommands: [
+                'Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, CPU',
+                'Get-MpPreference | Select-Object -ExpandProperty ExclusionProcess'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check Event Viewer > Windows Logs > Security for event 4625 (failed logon attempts).',
+            'Monitor LSA process memory usage during login.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-password-hash-verification',
+          name: 'Password Hash Verification',
+          description: 'The entered password is hashed and compared against the stored hash in the SAM database.',
+          normalDuration: { min: 50, max: 200, unit: 'ms' },
+          delayedDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Slow disk I/O reading SAM database',
+              description: 'HDD or degraded SSD causes slow reads of the SAM hive.',
+              diagnosticCommands: [
+                'Get-PhysicalDisk | Select-Object DeviceID, MediaType, HealthStatus',
+                'Get-Counter "\\PhysicalDisk(_Total)\\Avg. Disk sec/Read"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Ensure the system drive is an SSD for optimal performance.',
+            'Check disk health with CrystalDiskInfo or S.M.A.R.T. data.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-security-token-creation',
+          name: 'Security Token Creation',
+          description: 'Windows creates an access token containing user SID, group memberships, and privileges for the new session.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 1, max: 8, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Large number of local group memberships',
+              description: 'Token bloat from excessive group memberships increases token creation time.',
+              diagnosticCommands: [
+                'whoami /groups',
+                'net localgroup'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Review local group memberships for the user account.',
+            'Check for excessive nested group memberships.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-user-profile-load',
+          name: 'User Profile Load',
+          description: 'Windows loads the user profile (NTUSER.DAT registry hive and profile folders) from disk.',
+          normalDuration: { min: 500, max: 3000, unit: 'ms' },
+          delayedDuration: { min: 5, max: 60, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Large user profile',
+              description: 'Oversized profile folders (Desktop, AppData) slow down the profile load process.',
+              diagnosticCommands: [
+                'Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum',
+                'Get-ChildItem "$env:USERPROFILE\\AppData" -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum'
+              ]
+            },
+            {
+              title: 'Corrupted NTUSER.DAT',
+              description: 'Corrupt registry hive causes repeated retries and repair attempts during load.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\*" | Select-Object ProfileImagePath, State',
+                'reg query "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList" /s'
+              ]
+            },
+            {
+              title: 'Slow disk performance (HDD)',
+              description: 'Mechanical drives significantly slow profile loading especially with large profiles.',
+              diagnosticCommands: [
+                'Get-PhysicalDisk | Select-Object DeviceID, MediaType, HealthStatus, OperationalStatus'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check profile size — profiles over 1 GB cause noticeable delays.',
+            'Look for temporary files that can be cleaned up.',
+            'Consider if NTUSER.DAT is healthy using reg load/unload test.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-group-policy',
+          name: 'Group Policy (Local)',
+          description: 'Local Group Policy objects are applied to the user session.',
+          normalDuration: { min: 200, max: 2000, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Complex local policies with WMI filters',
+              description: 'WMI filter evaluation on slow hardware adds significant processing time.',
+              diagnosticCommands: [
+                'gpresult /R /SCOPE USER',
+                'Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" -MaxEvents 20 | Select-Object TimeCreated, Id, Message'
+              ]
+            },
+            {
+              title: 'Software restriction or AppLocker policies',
+              description: 'Security policies that scan executables add overhead during policy application.',
+              diagnosticCommands: [
+                'Get-AppLockerPolicy -Effective | Select-Object -ExpandProperty RuleCollections',
+                'gpresult /H "$env:TEMP\\gpresult.html"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check Group Policy operational log for slow CSEs (Client-Side Extensions).',
+            'Use gpresult /H to generate an HTML report of applied policies.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-shell-initialization',
+          name: 'Shell Initialization',
+          description: 'Windows Explorer shell (explorer.exe) starts, loading the desktop, taskbar, and system tray.',
+          normalDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Shell extensions and context menu handlers',
+              description: 'Third-party shell extensions loaded by explorer.exe can significantly delay initialization.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved" | Format-List',
+                'Get-Process explorer | Select-Object Id, CPU, WorkingSet64, StartTime'
+              ]
+            },
+            {
+              title: 'High disk I/O from concurrent startup processes',
+              description: 'Multiple programs starting simultaneously saturate disk bandwidth.',
+              diagnosticCommands: [
+                'Get-Counter "\\PhysicalDisk(_Total)\\% Disk Time"',
+                'Get-Counter "\\PhysicalDisk(_Total)\\Current Disk Queue Length"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Autoruns (Sysinternals) to review shell extensions.',
+            'Check Task Manager startup impact ratings.',
+            'Monitor disk queue length during login.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-startup-programs',
+          name: 'Startup Programs',
+          description: 'Applications configured to run at login are launched (Run keys, Startup folder, scheduled tasks).',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 15, max: 120, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Too many startup programs',
+              description: 'Excessive startup entries compete for CPU, RAM, and disk resources.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-ItemProperty "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location'
+              ]
+            },
+            {
+              title: 'Antivirus performing full scan at login',
+              description: 'AV solutions triggering scans on startup programs cause cascading delays.',
+              diagnosticCommands: [
+                'Get-MpComputerStatus | Select-Object QuickScanStartTime, FullScanStartTime, AntivirusEnabled',
+                'Get-Process | Where-Object { $_.CPU -gt 30 } | Select-Object Name, CPU, WorkingSet64'
+              ]
+            },
+            {
+              title: 'Network-dependent startup apps waiting for connectivity',
+              description: 'Applications requiring network access stall if the network is not yet ready.',
+              diagnosticCommands: [
+                'Get-NetConnectionProfile | Select-Object Name, InterfaceAlias, NetworkCategory, IPv4Connectivity'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Task Manager > Startup tab to review startup impact.',
+            'Disable unnecessary startup programs.',
+            'Check Run registry keys for unexpected entries.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-user-environment-ready',
+          name: 'User Environment Ready',
+          description: 'Desktop is fully loaded and responsive — the user can begin working.',
+          normalDuration: { min: 0, max: 2, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Background processes still initializing',
+              description: 'Desktop appears but remains sluggish while background tasks complete.',
+              diagnosticCommands: [
+                'Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64'
+              ]
+            },
+            {
+              title: 'Disk thrashing from concurrent I/O',
+              description: 'Multiple startup programs and services perform heavy disk I/O simultaneously, delaying desktop responsiveness.',
+              diagnosticCommands: [
+                'Get-Counter "\\PhysicalDisk(_Total)\\% Disk Time"',
+                'Get-Counter "\\PhysicalDisk(_Total)\\Current Disk Queue Length"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Wait 1-2 minutes after desktop appears before measuring responsiveness.',
+            'Check Resource Monitor for disk and CPU activity.'
+          ],
+          isUserAction: false
+        }
+      ],
+
+      domain: [
+        {
+          id: 'domain-credential-input',
+          name: 'Credential Input',
+          description: 'User enters domain credentials (DOMAIN\\user or user@domain) on the login screen.',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'none',
+          rootCauses: [],
+          diagnosticTips: ['Ensure keyboard and input devices are responsive.'],
+          isUserAction: true
+        },
+        {
+          id: 'domain-secure-channel-verification',
+          name: 'Secure Channel Verification',
+          description: 'The computer verifies its secure channel (machine account trust) with the domain controller.',
+          normalDuration: { min: 100, max: 500, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Broken computer trust relationship',
+              description: 'Machine account password is out of sync with AD, causing secure channel failure and NTLM fallback.',
+              diagnosticCommands: [
+                'Test-ComputerSecureChannel -Verbose',
+                'nltest /sc_verify:$($(Get-CimInstance Win32_ComputerSystem).Domain)'
+              ]
+            },
+            {
+              title: 'Network connectivity to DC is intermittent',
+              description: 'Unreliable network causes secure channel verification retries and timeouts.',
+              diagnosticCommands: [
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'Test-Connection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Count 4'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Run Test-ComputerSecureChannel to verify trust.',
+            'If broken, rejoin the domain or use Test-ComputerSecureChannel -Repair.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-dns-lookup',
+          name: 'DNS Lookup',
+          description: 'DNS resolution of domain SRV records to locate available domain controllers.',
+          normalDuration: { min: 10, max: 200, unit: 'ms' },
+          delayedDuration: { min: 1, max: 15, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'DNS server misconfiguration',
+              description: 'Client DNS settings point to slow, unreachable, or non-AD-integrated DNS servers.',
+              diagnosticCommands: [
+                'Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, ServerAddresses',
+                'Resolve-DnsName -Name _ldap._tcp.dc._msdcs.$($(Get-CimInstance Win32_ComputerSystem).Domain) -Type SRV'
+              ]
+            },
+            {
+              title: 'DNS SRV records missing or stale',
+              description: 'Missing _ldap._tcp SRV records prevent DC location, causing long timeouts.',
+              diagnosticCommands: [
+                'nslookup -type=SRV _ldap._tcp.$($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'ipconfig /displaydns | Select-String "Record Name|A \\(Host\\)"'
+              ]
+            },
+            {
+              title: 'DNS timeout due to unreachable server',
+              description: 'Primary DNS server is down, causing fallback to secondary with timeout delays.',
+              diagnosticCommands: [
+                'nslookup $($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'Test-NetConnection -ComputerName $($(Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -First 1).ServerAddresses[0]) -Port 53'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Ensure DNS points to AD-integrated DNS servers.',
+            'Test SRV record resolution for _ldap._tcp records.',
+            'Check ipconfig /all for correct DNS configuration.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-dc-locator',
+          name: 'DC Locator',
+          description: 'The DC Locator service identifies the optimal domain controller based on AD site topology.',
+          normalDuration: { min: 50, max: 500, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Incorrect AD site assignment',
+              description: 'Client is assigned to a remote AD site, causing authentication with a distant DC.',
+              diagnosticCommands: [
+                'nltest /dsgetsite',
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) /force'
+              ]
+            },
+            {
+              title: 'All nearby DCs are unavailable',
+              description: 'Local site DCs are offline, causing fallback to remote DCs with higher latency.',
+              diagnosticCommands: [
+                'nltest /dnsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'Get-ADDomainController -Filter * | Select-Object Name, Site, IPv4Address, IsGlobalCatalog'
+              ]
+            },
+            {
+              title: 'Subnet-to-site mapping missing',
+              description: 'Client subnet is not mapped in AD Sites and Services, preventing optimal DC selection.',
+              diagnosticCommands: [
+                'nltest /dsgetsite',
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) /try_next_closest_site'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Verify AD site assignment with nltest /dsgetsite.',
+            'Check subnet-to-site mappings in AD Sites and Services.',
+            'Use nltest /dsgetdc with /force to test DC discovery.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-kerberos-as-req',
+          name: 'Kerberos AS-REQ',
+          description: 'Client sends an Authentication Service Request to the KDC (Key Distribution Center) on the domain controller.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Clock skew exceeds 5-minute Kerberos tolerance',
+              description: 'Time difference between client and DC exceeds the default 5-minute maximum, causing Kerberos to fail.',
+              diagnosticCommands: [
+                'w32tm /query /status',
+                'w32tm /stripchart /computer:$($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") /samples:3'
+              ]
+            },
+            {
+              title: 'Kerberos port 88 blocked by firewall',
+              description: 'Network firewall blocks UDP/TCP port 88, preventing Kerberos authentication entirely.',
+              diagnosticCommands: [
+                'Test-NetConnection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Port 88',
+                'klist'
+              ]
+            },
+            {
+              title: 'KDC service not running on domain controller',
+              description: 'The Kerberos Key Distribution Center service on the DC is stopped or crashed.',
+              diagnosticCommands: [
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) /KDC',
+                'klist tgt'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check system clock synchronization with w32tm /query /status.',
+            'Ensure port 88 (Kerberos) is open to domain controllers.',
+            'Review Kerberos event log for authentication failures.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-kerberos-tgt-issued',
+          name: 'Kerberos TGT Issued',
+          description: 'KDC validates credentials and issues a Ticket Granting Ticket (TGT) to the client.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 2, max: 15, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'DC under heavy authentication load',
+              description: 'Domain controller is overloaded with authentication requests (e.g., morning rush), delaying TGT issuance.',
+              diagnosticCommands: [
+                'Test-Connection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Count 4',
+                'nltest /sc_query:$($(Get-CimInstance Win32_ComputerSystem).Domain)'
+              ]
+            },
+            {
+              title: 'Account lockout or restriction',
+              description: 'Account lockout policies or logon hour restrictions delay or prevent TGT issuance.',
+              diagnosticCommands: [
+                'net user %USERNAME% /domain',
+                'Get-ADUser $env:USERNAME -Properties LockedOut, LockoutTime, BadLogonCount'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use klist to verify TGT was issued and check expiry.',
+            'Check DC performance counters for authentication throughput.',
+            'Verify account is not locked out with net user /domain.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-ldap-user-lookup',
+          name: 'LDAP User Lookup',
+          description: 'LDAP query to Active Directory retrieves user object attributes, group memberships, and account policies.',
+          normalDuration: { min: 50, max: 500, unit: 'ms' },
+          delayedDuration: { min: 2, max: 20, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'LDAP port 389 blocked or slow',
+              description: 'Firewall rules or network congestion affecting LDAP queries to the domain controller.',
+              diagnosticCommands: [
+                'Test-NetConnection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Port 389',
+                'Test-NetConnection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Port 3268'
+              ]
+            },
+            {
+              title: 'Excessive group memberships (token bloat)',
+              description: 'User belongs to hundreds of groups, causing large LDAP result sets and token bloat.',
+              diagnosticCommands: [
+                'whoami /groups | Measure-Object -Line',
+                '(whoami /groups /fo csv | ConvertFrom-Csv).Count'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check LDAP connectivity on ports 389 and 3268 (Global Catalog).',
+            'Review user group membership count — over 100 groups causes noticeable delays.',
+            'Check AD replication health if attributes seem stale.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-security-token-creation',
+          name: 'Security Token Creation',
+          description: 'Windows creates an access token containing domain user SID, all group SIDs, and privileges.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 1, max: 10, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Token bloat from excessive group memberships',
+              description: 'Hundreds of domain and nested group SIDs cause MaxTokenSize to be exceeded or slow token construction.',
+              diagnosticCommands: [
+                'whoami /groups | Measure-Object -Line',
+                'reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Kerberos\\Parameters" /v MaxTokenSize'
+              ]
+            },
+            {
+              title: 'SID history accumulation from migrations',
+              description: 'Migrated accounts carry SID history entries that inflate token size.',
+              diagnosticCommands: [
+                'whoami /all',
+                'Get-ADUser $env:USERNAME -Properties SIDHistory | Select-Object -ExpandProperty SIDHistory'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check total group count with whoami /groups.',
+            'MaxTokenSize default is 12,000 bytes — increase if needed via registry.',
+            'Review and clean up unnecessary group memberships.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-user-profile-load',
+          name: 'User Profile Load',
+          description: 'User profile is loaded — for roaming profiles, this includes downloading the profile from a network share.',
+          normalDuration: { min: 500, max: 5000, unit: 'ms' },
+          delayedDuration: { min: 10, max: 300, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Large roaming profile',
+              description: 'Roaming profile over 1 GB must be downloaded from the network share at each login.',
+              diagnosticCommands: [
+                'Get-CimInstance Win32_UserProfile | Where-Object { -not $_.Special } | Select-Object LocalPath, RoamingConfigured, LastUseTime',
+                'Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum'
+              ]
+            },
+            {
+              title: 'Slow network share hosting roaming profiles',
+              description: 'File server hosting profiles is overloaded or connected via slow WAN link.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKCU:\\Volatile Environment" | Select-Object HOMESHARE, HOMEDRIVE',
+                'Test-Path "\\\\fileserver\\profiles$\\%USERNAME%"'
+              ]
+            },
+            {
+              title: 'Corrupted NTUSER.DAT hive',
+              description: 'Corrupt registry hive triggers repair attempts, significantly delaying profile load.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\*" | Select-Object ProfileImagePath, State, Guid',
+                'Get-WinEvent -LogName "Application" -MaxEvents 20 | Where-Object { $_.ProviderName -eq "Microsoft-Windows-User Profiles Service" }'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check profile size — roaming profiles over 1 GB cause major delays.',
+            'Consider implementing Folder Redirection to reduce roaming profile size.',
+            'Monitor file server performance during peak login times.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-folder-redirection',
+          name: 'Folder Redirection',
+          description: 'Redirected folders (Documents, Desktop, AppData) are mapped to network locations via Group Policy.',
+          normalDuration: { min: 200, max: 2000, unit: 'ms' },
+          delayedDuration: { min: 5, max: 60, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Network share for redirected folders is slow or unreachable',
+              description: 'The file server hosting redirected folders is overloaded, causing folder access delays.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders" | Format-List',
+                'Test-Path "$($(Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders").Personal)"'
+              ]
+            },
+            {
+              title: 'Offline Files sync conflicts',
+              description: 'Offline Files (CSC) sync encounters conflicts during login, stalling folder redirection.',
+              diagnosticCommands: [
+                'Get-WmiObject Win32_OfflineFilesCache | Select-Object Active, Enabled, Location',
+                'Get-WinEvent -LogName "Microsoft-Windows-OfflineFiles/Operational" -MaxEvents 10'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Verify network share accessibility from the client.',
+            'Check Offline Files sync status and conflicts.',
+            'Ensure DFS paths resolve correctly if using DFS namespaces.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-group-policy-processing',
+          name: 'Group Policy Processing',
+          description: 'Domain Group Policy Objects (GPOs) are downloaded from SYSVOL and applied by Client-Side Extensions (CSEs).',
+          normalDuration: { min: 2, max: 15, unit: 'seconds' },
+          delayedDuration: { min: 30, max: 300, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Too many GPOs linked to user/computer OUs',
+              description: 'Dozens of GPOs must each be evaluated and applied, multiplying processing time.',
+              diagnosticCommands: [
+                'gpresult /R /SCOPE USER',
+                'gpresult /R /SCOPE COMPUTER',
+                '(gpresult /R /SCOPE USER 2>&1 | Select-String "Applied Group Policy Objects" -Context 0,50).Context.PostContext | Where-Object { $_ -match "\\S" }'
+              ]
+            },
+            {
+              title: 'Slow CSEs (Software Installation, Folder Redirection)',
+              description: 'Certain Client-Side Extensions take much longer than others, especially Software Installation and Folder Redirection.',
+              diagnosticCommands: [
+                'Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" -MaxEvents 50 | Where-Object { $_.Id -in @(4016,5016) } | Select-Object TimeCreated, Message',
+                'Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" -MaxEvents 10 | Where-Object { $_.Id -eq 8002 } | Select-Object TimeCreated, Message'
+              ]
+            },
+            {
+              title: 'SYSVOL replication issues',
+              description: 'SYSVOL content is inconsistent across DCs, causing GPO download failures or retries.',
+              diagnosticCommands: [
+                'Test-Path "\\\\$($(Get-CimInstance Win32_ComputerSystem).Domain)\\SYSVOL"',
+                'dcdiag /test:sysvolcheck /s:$($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","")'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check GP operational log for slow CSEs (events 4016/5016).',
+            'Use gpresult /H for a detailed HTML report.',
+            'Review GPO count — more than 30 GPOs usually indicates cleanup is needed.',
+            'Ensure SYSVOL is reachable with Test-Path.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-login-script-execution',
+          name: 'Login Script Execution',
+          description: 'Logon scripts (batch files, VBScript, PowerShell) assigned via GPO or user properties are executed.',
+          normalDuration: { min: 1, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 15, max: 120, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Long-running logon scripts',
+              description: 'Legacy batch or VBScript logon scripts perform slow operations (network mapping, inventory, software checks).',
+              diagnosticCommands: [
+                'Get-ChildItem "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Group Policy\\State\\*\\Scripts\\Logon" -ErrorAction SilentlyContinue',
+                'Get-ChildItem "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Group Policy\\State\\Machine\\Scripts\\Startup" -ErrorAction SilentlyContinue'
+              ]
+            },
+            {
+              title: 'Logon script accessing unavailable network resources',
+              description: 'Script attempts to connect to offline servers or slow shares, waiting for timeout on each.',
+              diagnosticCommands: [
+                'Get-Content "\\\\$($(Get-CimInstance Win32_ComputerSystem).Domain)\\NETLOGON\\*.bat" -ErrorAction SilentlyContinue | Select-Object -First 50',
+                'Get-Content "\\\\$($(Get-CimInstance Win32_ComputerSystem).Domain)\\NETLOGON\\*.vbs" -ErrorAction SilentlyContinue | Select-Object -First 50'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Review logon scripts in NETLOGON share for slow operations.',
+            'Consider migrating legacy scripts to Group Policy Preferences.',
+            'Run logon scripts asynchronously if possible.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-drive-printer-mapping',
+          name: 'Drive/Printer Mapping',
+          description: 'Network drives and printers are mapped via GPO preferences, logon scripts, or Group Policy.',
+          normalDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 120, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Offline or slow file servers for drive mappings',
+              description: 'Network drive targets are unreachable or slow, causing net use commands to timeout.',
+              diagnosticCommands: [
+                'net use',
+                'Get-SmbMapping | Select-Object LocalPath, RemotePath, Status',
+                'Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -like "\\\\*" }'
+              ]
+            },
+            {
+              title: 'Print server or printer offline',
+              description: 'Printer connections attempt to contact unavailable print servers, each with its own timeout.',
+              diagnosticCommands: [
+                'Get-Printer | Select-Object Name, PortName, PrinterStatus',
+                'Get-PrintJob -PrinterName * -ErrorAction SilentlyContinue'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check net use output for disconnected or errored drives.',
+            'Verify print server availability.',
+            'Use GP Preferences with Item-Level Targeting for conditional mappings.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-shell-initialization',
+          name: 'Shell Initialization',
+          description: 'Windows Explorer shell starts, loading the desktop, taskbar, system tray, and any deployed shortcuts.',
+          normalDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Shell extensions and context menu handlers',
+              description: 'Third-party and enterprise shell extensions loaded by explorer.exe delay initialization.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved" | Format-List',
+                'Get-Process explorer | Select-Object Id, CPU, WorkingSet64, StartTime'
+              ]
+            },
+            {
+              title: 'Redirected Desktop/Start Menu on slow network',
+              description: 'Desktop and Start Menu content served from a network share loads slowly.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders" | Select-Object Desktop, "Start Menu"',
+                'Test-Path "$($(Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders").Desktop)"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Autoruns (Sysinternals) to review shell extensions.',
+            'Check if Desktop/Start Menu are redirected to network locations.',
+            'Monitor explorer.exe CPU and memory usage at startup.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-startup-programs',
+          name: 'Startup Programs',
+          description: 'Applications configured to run at login launch, including those deployed via GPO software installation.',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 15, max: 120, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Too many startup programs (local + GPO-deployed)',
+              description: 'Combination of local startup entries and GPO-deployed software creates excessive startup load.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-ItemProperty "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location'
+              ]
+            },
+            {
+              title: 'Enterprise agents and monitoring tools',
+              description: 'SCCM client, antivirus, DLP, and other enterprise agents all initialize concurrently at login.',
+              diagnosticCommands: [
+                'Get-Process | Where-Object { $_.CPU -gt 10 } | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64',
+                'Get-Service | Where-Object { $_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Measure-Object'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Task Manager > Startup tab to review startup impact.',
+            'Audit enterprise agents for startup performance impact.',
+            'Consider staggering startup programs with delayed start.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-user-environment-ready',
+          name: 'User Environment Ready',
+          description: 'Desktop is fully loaded, all drives/printers mapped, and the user environment is responsive.',
+          normalDuration: { min: 0, max: 2, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Background processes still initializing',
+              description: 'Desktop appears but remains sluggish while background sync, updates, and agents complete.',
+              diagnosticCommands: [
+                'Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64'
+              ]
+            },
+            {
+              title: 'Windows Update or SCCM client performing post-login tasks',
+              description: 'Update agents scan for and download updates immediately after login, consuming bandwidth and CPU.',
+              diagnosticCommands: [
+                'Get-Service wuauserv | Select-Object Status, StartType',
+                'Get-WinEvent -LogName "Microsoft-Windows-WindowsUpdateClient/Operational" -MaxEvents 5 | Select-Object TimeCreated, Message'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Wait 1-2 minutes after desktop appears before measuring responsiveness.',
+            'Check Resource Monitor for remaining disk and CPU activity.',
+            'Verify all mapped drives show as connected.'
+          ],
+          isUserAction: false
+        }
+      ]
+    };
+
+    /* ========================================
+       State
+       ======================================== */
+    let selectedType = 'local';
+    const flaggedSteps = new Set();
+
+    /* ========================================
+       Helper Functions
+       ======================================== */
+
+    /**
+     * Convert a duration object to a normalized millisecond value.
+     */
+    function durationToMs(value, unit) {
+      if (unit === 'ms') return value;
+      if (unit === 'seconds' || unit === 'second' || unit === 's') return value * 1000;
+      return value;
+    }
+
+    /**
+     * Format a duration value with its unit for display.
+     */
+    function formatDuration(min, max, unit) {
+      var displayUnit = unit === 'ms' ? 'ms' : 's';
+      return min + ' – ' + max + ' ' + displayUnit;
+    }
+
+    /**
+     * Get the CSS badge class for a given risk level.
+     */
+    function riskBadgeClass(risk) {
+      var map = {
+        none: 'badge--none',
+        low: 'badge--low',
+        medium: 'badge--medium',
+        high: 'badge--high',
+        critical: 'badge--critical'
+      };
+      return map[risk] || 'badge--none';
+    }
+
+    /**
+     * Calculate summary statistics for a set of steps.
+     */
+    function calcSummary(steps) {
+      var totalNormalMs = 0;
+      var totalWorstMs = 0;
+      var highCriticalCount = 0;
+
+      for (var i = 0; i < steps.length; i++) {
+        var step = steps[i];
+        var d = step.normalDuration;
+        totalNormalMs += durationToMs(d.max, d.unit);
+
+        var dd = step.delayedDuration;
+        totalWorstMs += durationToMs(dd.max, dd.unit);
+
+        if (step.delayRisk === 'high' || step.delayRisk === 'critical') {
+          highCriticalCount++;
+        }
+      }
+
+      return {
+        totalNormalMs: totalNormalMs,
+        totalWorstMs: totalWorstMs,
+        highCriticalCount: highCriticalCount,
+        stepCount: steps.length
+      };
+    }
+
+    /**
+     * Format milliseconds to a human-readable string.
+     */
+    function formatMs(ms) {
+      if (ms < 1000) return ms + ' ms';
+      var secs = ms / 1000;
+      if (secs < 60) return secs.toFixed(1) + ' s';
+      var mins = Math.floor(secs / 60);
+      var remainSecs = Math.round(secs % 60);
+      return mins + 'm ' + remainSecs + 's';
+    }
+
+    /**
+     * Escape HTML entities for safe rendering.
+     */
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    /* ========================================
+       Rendering Functions
+       ======================================== */
+
+    /**
+     * Render the tab navigation.
+     */
+    function renderTabs() {
+      var nav = document.querySelector('.nav');
+      nav.innerHTML = '';
+
+      var types = [
+        { key: 'local', label: 'Local Login' },
+        { key: 'domain', label: 'Domain-Joined Login' }
+      ];
+
+      for (var i = 0; i < types.length; i++) {
+        var btn = document.createElement('button');
+        btn.className = 'nav__tab' + (types[i].key === selectedType ? ' nav__tab--active' : '');
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('aria-selected', types[i].key === selectedType ? 'true' : 'false');
+        btn.setAttribute('aria-label', types[i].label + ' flow');
+        btn.setAttribute('tabindex', types[i].key === selectedType ? '0' : '-1');
+        btn.id = 'tab-' + types[i].key;
+        btn.setAttribute('aria-controls', 'tabpanel-' + types[i].key);
+        btn.setAttribute('data-type', types[i].key);
+        btn.textContent = types[i].label;
+        nav.appendChild(btn);
+      }
+    }
+
+    /**
+     * Render the summary dashboard.
+     */
+    function renderSummary(stats) {
+      var container = document.getElementById('summary');
+      container.innerHTML = '';
+
+      var flaggedCount = flaggedSteps.size;
+      var flaggedDelayMs = 0;
+      var steps = LOGIN_STEPS[selectedType];
+      for (var f = 0; f < steps.length; f++) {
+        if (flaggedSteps.has(steps[f].id)) {
+          flaggedDelayMs += durationToMs(steps[f].delayedDuration.max, steps[f].delayedDuration.unit) -
+                           durationToMs(steps[f].normalDuration.max, steps[f].normalDuration.unit);
+        }
+      }
+
+      var cards = [
+        { label: 'Steps', value: stats.stepCount },
+        { label: 'Normal Time (max)', value: formatMs(stats.totalNormalMs) },
+        { label: 'Worst-Case Time', value: formatMs(stats.totalWorstMs) },
+        { label: 'High/Critical Risk', value: stats.highCriticalCount }
+      ];
+
+      if (flaggedCount > 0) {
+        cards.push({ label: 'Flagged Steps', value: flaggedCount });
+        cards.push({ label: 'Est. Delay Impact', value: '+' + formatMs(flaggedDelayMs) });
+      }
+
+      for (var i = 0; i < cards.length; i++) {
+        var card = document.createElement('div');
+        card.className = 'summary__card';
+        card.setAttribute('role', 'status');
+        card.setAttribute('aria-label', cards[i].label + ': ' + cards[i].value);
+        card.innerHTML =
+          '<div class="summary__label">' + cards[i].label + '</div>' +
+          '<div class="summary__value">' + cards[i].value + '</div>';
+        container.appendChild(card);
+      }
+    }
+
+    /**
+     * Build callout HTML for a given step ID.
+     */
+    function renderCallouts(stepId) {
+      var callouts = EDGE_CASE_CALLOUTS[stepId];
+      if (!callouts || callouts.length === 0) return '';
+      var html = '';
+      for (var c = 0; c < callouts.length; c++) {
+        html += '<div class="callout" role="note" aria-label="' + escapeHtml(callouts[c].title) + '">' +
+          '<div class="callout__title">\u2139\uFE0F ' + escapeHtml(callouts[c].title) + '</div>' +
+          '<p>' + escapeHtml(callouts[c].text) + '</p>' +
+          '</div>';
+      }
+      return html;
+    }
+
+    /**
+     * Render the timeline with all step cards.
+     */
+    function renderTimeline() {
+      var container = document.getElementById('timeline');
+      container.innerHTML = '';
+
+      var steps = LOGIN_STEPS[selectedType];
+      if (!steps) return;
+
+      for (var i = 0; i < steps.length; i++) {
+        var step = steps[i];
+        var isRiskFlagged = step.delayRisk === 'high' || step.delayRisk === 'critical';
+        var isUserFlagged = flaggedSteps.has(step.id);
+
+        var card = document.createElement('article');
+        card.className = 'timeline__step' +
+          (isRiskFlagged ? ' timeline__step--flagged' : '') +
+          (isUserFlagged ? ' timeline__step--user-flagged' : '');
+        card.setAttribute('data-step-id', step.id);
+        card.setAttribute('data-step-index', i);
+        card.setAttribute('role', 'listitem');
+        card.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + step.name + ' — risk: ' + step.delayRisk);
+
+        var html =
+          '<div class="step__header">' +
+            '<div>' +
+              '<span class="step__number">Step ' + (i + 1) + '</span> ' +
+              '<span class="step__name">' + step.name + '</span>' +
+            '</div>' +
+            '<span class="badge ' + riskBadgeClass(step.delayRisk) + '" role="status" aria-label="Risk level: ' + step.delayRisk + '">' + step.delayRisk + '</span>' +
+          '</div>' +
+          '<p class="step__description">' + step.description + '</p>' +
+          '<div class="step__meta">' +
+            '<span class="step__duration" aria-label="Normal duration: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '">Normal: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '</span>' +
+          '</div>';
+
+        // Add "Mark as slow" toggle for steps with risk >= low
+        if (step.delayRisk !== 'none') {
+          html += '<label class="step__flag-toggle" aria-label="Mark ' + step.name + ' as experiencing delay">' +
+            '<input type="checkbox" data-flag-step="' + step.id + '"' + (isUserFlagged ? ' checked' : '') +
+            ' aria-label="Flag ' + step.name + ' as slow">' +
+            '\u26A0 Mark as slow' +
+            '</label>';
+        }
+
+        // Edge case callouts
+        html += renderCallouts(step.id);
+
+        // Add expandable root cause details only for steps with delayRisk >= 'low'
+        if (step.delayRisk !== 'none' && step.rootCauses && step.rootCauses.length > 0) {
+          html += '<details class="step__details"' + (isUserFlagged ? ' open' : '') +
+            ' aria-label="Root causes and diagnostics for ' + step.name + '">' +
+            '<summary role="button" aria-expanded="' + (isUserFlagged ? 'true' : 'false') + '">Root Causes &amp; Diagnostics (' + step.rootCauses.length + ')</summary>' +
+            '<div class="step__details-content">';
+
+          for (var j = 0; j < step.rootCauses.length; j++) {
+            var rc = step.rootCauses[j];
+            html += '<div class="root-cause root-cause--' + step.delayRisk + '">' +
+              '<div class="root-cause__title">' +
+                '<span class="root-cause__severity root-cause__severity--' + step.delayRisk + '" aria-hidden="true"></span>' +
+                rc.title +
+              '</div>' +
+              '<p class="root-cause__description">' + rc.description + '</p>';
+
+            if (rc.diagnosticCommands && rc.diagnosticCommands.length > 0) {
+              html += '<div class="root-cause__commands-label">Diagnostic Commands:</div>' +
+                '<pre class="root-cause__commands" role="code" aria-label="Diagnostic commands for ' + escapeHtml(rc.title) + '">';
+              for (var k = 0; k < rc.diagnosticCommands.length; k++) {
+                html += escapeHtml(rc.diagnosticCommands[k]);
+                if (k < rc.diagnosticCommands.length - 1) html += '\n';
+              }
+              html += '</pre>';
+            }
+            html += '</div>';
+          }
+
+          // Diagnostic tips
+          if (step.diagnosticTips && step.diagnosticTips.length > 0) {
+            html += '<div class="diagnostic-tips">' +
+              '<span class="diagnostic-tips__label">Tips:</span>' +
+              '<ul class="diagnostic-tips__list">';
+            for (var t = 0; t < step.diagnosticTips.length; t++) {
+              html += '<li>' + step.diagnosticTips[t] + '</li>';
+            }
+            html += '</ul></div>';
+          }
+
+          html += '</div></details>';
+        }
+
+        card.innerHTML = html;
+        container.appendChild(card);
+      }
+    }
+
+    /**
+     * Render the flagged delays summary section.
+     */
+    function renderFlaggedSummary() {
+      var existing = document.getElementById('flagged-summary');
+      if (existing) existing.remove();
+
+      if (flaggedSteps.size === 0) return;
+
+      var steps = LOGIN_STEPS[selectedType];
+      var flaggedItems = [];
+      for (var i = 0; i < steps.length; i++) {
+        if (flaggedSteps.has(steps[i].id)) {
+          flaggedItems.push(steps[i]);
+        }
+      }
+
+      if (flaggedItems.length === 0) return;
+
+      var section = document.createElement('section');
+      section.id = 'flagged-summary';
+      section.className = 'flagged-summary';
+      section.setAttribute('aria-label', 'Flagged delays summary');
+      section.setAttribute('role', 'region');
+
+      var html = '<div class="flagged-summary__title">\u26A0 Flagged Delays Summary (' + flaggedItems.length + ')</div>';
+
+      for (var i = 0; i < flaggedItems.length; i++) {
+        var step = flaggedItems[i];
+        html += '<div class="flagged-summary__step">' +
+          '<div class="flagged-summary__step-name">' + step.name +
+          ' <span class="badge ' + riskBadgeClass(step.delayRisk) + '">' + step.delayRisk + '</span></div>';
+
+        if (step.rootCauses.length > 0) {
+          html += '<ul class="flagged-summary__root-causes">';
+          var allCommands = [];
+          for (var j = 0; j < step.rootCauses.length; j++) {
+            html += '<li>' + step.rootCauses[j].title + '</li>';
+            if (step.rootCauses[j].diagnosticCommands) {
+              allCommands = allCommands.concat(step.rootCauses[j].diagnosticCommands);
+            }
+          }
+          html += '</ul>';
+
+          if (allCommands.length > 0) {
+            html += '<pre class="flagged-summary__commands" role="code">' + allCommands.map(escapeHtml).join('\n') + '</pre>';
+          }
+        }
+
+        html += '</div>';
+      }
+
+      section.innerHTML = html;
+
+      var timeline = document.getElementById('timeline');
+      timeline.parentNode.insertBefore(section, timeline);
+    }
+
+    /**
+     * Main render function — orchestrates all rendering.
+     */
+    function render() {
+      var steps = LOGIN_STEPS[selectedType];
+      var stats = calcSummary(steps);
+
+      renderTabs();
+      renderSummary(stats);
+      renderTimeline();
+      renderFlaggedSummary();
+    }
+
+    /* ========================================
+       Event Handlers
+       ======================================== */
+
+    // Event delegation on nav for tab switching
+    document.querySelector('.nav').addEventListener('click', function(e) {
+      var tab = e.target.closest('.nav__tab');
+      if (!tab) return;
+
+      var type = tab.getAttribute('data-type');
+      if (type && type !== selectedType) {
+        selectedType = type;
+        flaggedSteps.clear();
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
+    // Keyboard navigation for tabs (arrow keys)
+    document.querySelector('.nav').addEventListener('keydown', function(e) {
+      var tabs = Array.from(document.querySelectorAll('.nav__tab'));
+      var currentIndex = tabs.indexOf(document.activeElement);
+      if (currentIndex === -1) return;
+
+      var newIndex = -1;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        newIndex = (currentIndex + 1) % tabs.length;
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        newIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      } else if (e.key === 'Home') {
+        newIndex = 0;
+      } else if (e.key === 'End') {
+        newIndex = tabs.length - 1;
+      }
+
+      if (newIndex >= 0) {
+        e.preventDefault();
+        tabs[newIndex].focus();
+        tabs[newIndex].click();
+      }
+    });
+
+    // Event delegation on timeline for flag checkboxes
+    document.getElementById('timeline').addEventListener('change', function(e) {
+      var checkbox = e.target.closest('[data-flag-step]');
+      if (!checkbox) return;
+
+      var stepId = checkbox.getAttribute('data-flag-step');
+      if (checkbox.checked) {
+        flaggedSteps.add(stepId);
+      } else {
+        flaggedSteps.delete(stepId);
+      }
+
+      var steps = LOGIN_STEPS[selectedType];
+      var stats = calcSummary(steps);
+      renderSummary(stats);
+      renderTimeline();
+      renderFlaggedSummary();
+    });
+
+    // Update aria-expanded on details toggle
+    document.getElementById('timeline').addEventListener('toggle', function(e) {
+      if (e.target.tagName === 'DETAILS') {
+        var summary = e.target.querySelector('summary');
+        if (summary) {
+          summary.setAttribute('aria-expanded', e.target.open ? 'true' : 'false');
+        }
+      }
+    }, true);
+
+    // Expand all details panels for print
+    window.addEventListener('beforeprint', function() {
+      document.querySelectorAll('.step__details').forEach(function(d) { d.open = true; });
+    });
+
+    /* ========================================
+       Initialization
+       ======================================== */
+
+    // Set footer generation date
+    document.getElementById('footer-date').textContent = 'Generated: ' + new Date().toLocaleDateString('en-US', {
+      year: 'numeric', month: 'long', day: 'numeric'
+    });
+
+    render();
+  </script>
+</body>
+</html>
