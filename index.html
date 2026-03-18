@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Windows Login Flow Diagnostic Tool - Visualize and diagnose login delays for local and domain-joined logins">
+  <title>Windows Login Flow &amp; Delay Diagnosis</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='2' y='2' width='13' height='13' fill='%230078d4'/><rect x='17' y='2' width='13' height='13' fill='%230078d4'/><rect x='2' y='17' width='13' height='13' fill='%230078d4'/><rect x='17' y='17' width='13' height='13' fill='%230078d4'/></svg>">
+  <style>
+    /* ========================================
+       CSS Custom Properties (Theming)
+       ======================================== */
+    :root {
+      /* Risk colors */
+      --color-risk-none: #10b981;
+      --color-risk-low: #22c55e;
+      --color-risk-medium: #f59e0b;
+      --color-risk-high: #ef4444;
+      --color-risk-critical: #991b1b;
+
+      /* Risk background (lighter variants) */
+      --color-risk-none-bg: #d1fae5;
+      --color-risk-low-bg: #dcfce7;
+      --color-risk-medium-bg: #fef3c7;
+      --color-risk-high-bg: #fee2e2;
+      --color-risk-critical-bg: #fecaca;
+
+      /* Brand / UI colors */
+      --color-primary: #0078d4;
+      --color-primary-hover: #005a9e;
+      --color-bg: #f8fafc;
+      --color-surface: #ffffff;
+      --color-border: #e2e8f0;
+      --color-text: #1e293b;
+      --color-text-secondary: #64748b;
+      --color-text-muted: #94a3b8;
+
+      /* Spacing scale */
+      --space-xs: 0.25rem;
+      --space-sm: 0.5rem;
+      --space-md: 1rem;
+      --space-lg: 1.5rem;
+      --space-xl: 2rem;
+      --space-2xl: 3rem;
+
+      /* Typography */
+      --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      --font-size-xs: 0.75rem;
+      --font-size-sm: 0.875rem;
+      --font-size-base: 1rem;
+      --font-size-lg: 1.125rem;
+      --font-size-xl: 1.25rem;
+      --font-size-2xl: 1.5rem;
+      --font-size-3xl: 1.875rem;
+
+      /* Border radius */
+      --radius-sm: 0.25rem;
+      --radius-md: 0.5rem;
+      --radius-lg: 0.75rem;
+
+      /* Shadows */
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+
+      /* Layout */
+      --max-width: 960px;
+      --header-height: auto;
+    }
+
+    /* ========================================
+       Base / Reset
+       ======================================== */
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      font-size: 16px;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-family);
+      font-size: var(--font-size-base);
+      color: var(--color-text);
+      background-color: var(--color-bg);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ========================================
+       Layout (CSS Grid)
+       ======================================== */
+    .app {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-height: 100vh;
+    }
+
+    .app__header {
+      background-color: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: var(--shadow-sm);
+      padding: var(--space-lg) var(--space-xl);
+    }
+
+    .app__header-inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .app__title {
+      font-size: var(--font-size-2xl);
+      font-weight: 700;
+      color: var(--color-primary);
+    }
+
+    .app__subtitle {
+      font-size: var(--font-size-sm);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+    }
+
+    .app__main {
+      max-width: var(--max-width);
+      width: 100%;
+      margin: 0 auto;
+      padding: var(--space-xl);
+    }
+
+    .app__footer {
+      background-color: var(--color-surface);
+      border-top: 1px solid var(--color-border);
+      padding: var(--space-md) var(--space-xl);
+      text-align: center;
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+    }
+
+    /* ========================================
+       Navigation / Tabs
+       ======================================== */
+    .nav {
+      display: flex;
+      gap: var(--space-sm);
+      margin-top: var(--space-md);
+    }
+
+    .nav__tab {
+      padding: var(--space-sm) var(--space-lg);
+      border: 2px solid var(--color-border);
+      border-radius: var(--radius-md);
+      background: var(--color-surface);
+      cursor: pointer;
+      font-size: var(--font-size-sm);
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      transition: all 0.2s ease;
+    }
+
+    .nav__tab:hover {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+    }
+
+    .nav__tab--active {
+      background-color: var(--color-primary);
+      border-color: var(--color-primary);
+      color: #ffffff;
+    }
+
+    .nav__tab--active:hover {
+      background-color: var(--color-primary-hover);
+      color: #ffffff;
+    }
+
+    /* ========================================
+       Summary Dashboard
+       ======================================== */
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: var(--space-md);
+      margin-bottom: var(--space-xl);
+    }
+
+    .summary__card {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-lg);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .summary__label {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    .summary__value {
+      font-size: var(--font-size-2xl);
+      font-weight: 700;
+      margin-top: var(--space-xs);
+    }
+
+    /* ========================================
+       Timeline
+       ======================================== */
+    .timeline {
+      position: relative;
+      padding-left: var(--space-xl);
+    }
+
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 0.5rem;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background-color: var(--color-border);
+    }
+
+    .timeline__step {
+      position: relative;
+      margin-bottom: var(--space-lg);
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: var(--space-lg);
+      box-shadow: var(--shadow-sm);
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+
+    .timeline__step::before {
+      content: '';
+      position: absolute;
+      left: calc(-1 * var(--space-xl) + 0.25rem);
+      top: var(--space-lg);
+      width: 0.625rem;
+      height: 0.625rem;
+      border-radius: 50%;
+      background-color: var(--color-primary);
+      border: 2px solid var(--color-surface);
+    }
+
+    .timeline__step--flagged {
+      border-color: var(--color-risk-high);
+      box-shadow: var(--shadow-md);
+    }
+
+    /* ========================================
+       Step Card Content
+       ======================================== */
+    .step__header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: var(--space-sm);
+    }
+
+    .step__name {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+    }
+
+    .step__number {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      font-weight: 600;
+    }
+
+    .step__description {
+      color: var(--color-text-secondary);
+      font-size: var(--font-size-sm);
+      margin-top: var(--space-sm);
+    }
+
+    .step__meta {
+      display: flex;
+      gap: var(--space-md);
+      margin-top: var(--space-sm);
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .step__duration {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-muted);
+      font-family: var(--font-mono);
+    }
+
+    /* ========================================
+       Risk Badge
+       ======================================== */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-xs);
+      padding: 0.125rem var(--space-sm);
+      border-radius: 9999px;
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .badge--none {
+      background-color: var(--color-risk-none-bg);
+      color: var(--color-risk-none);
+    }
+
+    .badge--low {
+      background-color: var(--color-risk-low-bg);
+      color: var(--color-risk-low);
+    }
+
+    .badge--medium {
+      background-color: var(--color-risk-medium-bg);
+      color: var(--color-risk-medium);
+    }
+
+    .badge--high {
+      background-color: var(--color-risk-high-bg);
+      color: var(--color-risk-high);
+    }
+
+    .badge--critical {
+      background-color: var(--color-risk-critical-bg);
+      color: var(--color-risk-critical);
+    }
+
+    /* ========================================
+       Details / Root Cause Panel
+       ======================================== */
+    .step__details {
+      margin-top: var(--space-md);
+      border-top: 1px solid var(--color-border);
+      padding-top: var(--space-md);
+    }
+
+    .step__details summary {
+      cursor: pointer;
+      font-weight: 600;
+      font-size: var(--font-size-sm);
+      color: var(--color-primary);
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .step__details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .step__details[open] summary::before {
+      content: '\25BC';
+      font-size: var(--font-size-xs);
+    }
+
+    .step__details:not([open]) summary::before {
+      content: '\25B6';
+      font-size: var(--font-size-xs);
+    }
+
+    /* ========================================
+       Utility
+       ======================================== */
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border-width: 0;
+    }
+
+    /* ========================================
+       Responsive: Mobile (375px)
+       ======================================== */
+    @media (max-width: 480px) {
+      .app__header {
+        padding: var(--space-md);
+      }
+
+      .app__main {
+        padding: var(--space-md);
+      }
+
+      .app__title {
+        font-size: var(--font-size-xl);
+      }
+
+      .nav {
+        flex-direction: column;
+      }
+
+      .nav__tab {
+        text-align: center;
+      }
+
+      .summary {
+        grid-template-columns: 1fr;
+      }
+
+      .step__header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .timeline {
+        padding-left: var(--space-lg);
+      }
+    }
+
+    /* ========================================
+       Responsive: Tablet (768px)
+       ======================================== */
+    @media (min-width: 481px) and (max-width: 768px) {
+      .summary {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    /* ========================================
+       Responsive: Desktop (1024px+)
+       ======================================== */
+    @media (min-width: 1024px) {
+      .summary {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+
+    /* ========================================
+       Print Styles
+       ======================================== */
+    @media print {
+      body {
+        background: #ffffff;
+        color: #000000;
+        font-size: 11pt;
+      }
+
+      .app {
+        display: block;
+      }
+
+      .app__header {
+        box-shadow: none;
+        border-bottom: 2px solid #000000;
+        padding: 0.5cm 0;
+      }
+
+      .app__main {
+        padding: 0.5cm 0;
+        max-width: 100%;
+      }
+
+      .app__footer {
+        border-top: 1px solid #000000;
+        padding: 0.25cm 0;
+      }
+
+      .nav__tab {
+        border: 1px solid #999999;
+        box-shadow: none;
+      }
+
+      .nav__tab--active {
+        background-color: #000000;
+        color: #ffffff;
+      }
+
+      .timeline__step {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        break-inside: avoid;
+      }
+
+      .summary__card {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+      }
+
+      /* Expand all details for print */
+      .step__details {
+        display: block;
+      }
+
+      .step__details[open] summary,
+      .step__details summary {
+        font-weight: bold;
+      }
+
+      .timeline__step--flagged {
+        border-color: #000000;
+        border-width: 2px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" role="application" aria-label="Windows Login Flow Diagnostic Tool">
+    <!-- Header -->
+    <header class="app__header">
+      <div class="app__header-inner">
+        <h1 class="app__title">Windows Login Flow &amp; Delay Diagnosis</h1>
+        <p class="app__subtitle">Interactive diagnostic tool for identifying and resolving Windows login delays</p>
+        <nav class="nav" role="tablist" aria-label="Login type selector">
+          <!-- Tabs rendered by JS -->
+        </nav>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="app__main">
+      <!-- Summary Dashboard -->
+      <section class="summary" aria-label="Summary dashboard" id="summary">
+        <!-- Rendered by JS -->
+      </section>
+
+      <!-- Timeline -->
+      <section class="timeline" aria-label="Login step timeline" id="timeline">
+        <!-- Rendered by JS -->
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app__footer">
+      <p>Windows Login Flow Diagnostic Tool &mdash; For IT administrators and system engineers</p>
+    </footer>
+  </div>
+
+  <script>
+    /* ========================================
+       Data Constants
+       ======================================== */
+    // LOGIN_STEPS will be populated in subtask-1-2
+
+    /* ========================================
+       State
+       ======================================== */
+
+    /* ========================================
+       Rendering Functions
+       ======================================== */
+
+    /* ========================================
+       Event Handlers
+       ======================================== */
+
+    /* ========================================
+       Initialization
+       ======================================== */
+  </script>
+</body>
+</html>
