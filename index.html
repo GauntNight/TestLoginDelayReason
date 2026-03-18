@@ -549,7 +549,790 @@
     /* ========================================
        Data Constants
        ======================================== */
-    // LOGIN_STEPS will be populated in subtask-1-2
+    const LOGIN_STEPS = {
+      local: [
+        {
+          id: 'local-credential-input',
+          name: 'Credential Input',
+          description: 'User enters username and password on the Windows lock/login screen.',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'none',
+          rootCauses: [],
+          diagnosticTips: ['Ensure keyboard and input devices are responsive.'],
+          isUserAction: true
+        },
+        {
+          id: 'local-lsa-authentication',
+          name: 'LSA Authentication',
+          description: 'Local Security Authority validates credentials against the local SAM database.',
+          normalDuration: { min: 100, max: 500, unit: 'ms' },
+          delayedDuration: { min: 2, max: 15, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'High CPU or RAM usage during authentication',
+              description: 'LSA service competes with other processes for system resources, slowing credential validation.',
+              diagnosticCommands: [
+                'Get-CimInstance Win32_Processor | Select-Object LoadPercentage',
+                'Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize'
+              ]
+            },
+            {
+              title: 'Antivirus scanning LSA operations',
+              description: 'Real-time AV scanning intercepts LSA credential operations causing delays.',
+              diagnosticCommands: [
+                'Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 Name, CPU',
+                'Get-MpPreference | Select-Object -ExpandProperty ExclusionProcess'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check Event Viewer > Windows Logs > Security for event 4625 (failed logon attempts).',
+            'Monitor LSA process memory usage during login.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-password-hash-verification',
+          name: 'Password Hash Verification',
+          description: 'The entered password is hashed and compared against the stored hash in the SAM database.',
+          normalDuration: { min: 50, max: 200, unit: 'ms' },
+          delayedDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Slow disk I/O reading SAM database',
+              description: 'HDD or degraded SSD causes slow reads of the SAM hive.',
+              diagnosticCommands: [
+                'Get-PhysicalDisk | Select-Object DeviceID, MediaType, HealthStatus',
+                'Get-Counter "\\PhysicalDisk(_Total)\\Avg. Disk sec/Read"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Ensure the system drive is an SSD for optimal performance.',
+            'Check disk health with CrystalDiskInfo or S.M.A.R.T. data.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-security-token-creation',
+          name: 'Security Token Creation',
+          description: 'Windows creates an access token containing user SID, group memberships, and privileges for the new session.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 1, max: 8, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Large number of local group memberships',
+              description: 'Token bloat from excessive group memberships increases token creation time.',
+              diagnosticCommands: [
+                'whoami /groups',
+                'net localgroup'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Review local group memberships for the user account.',
+            'Check for excessive nested group memberships.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-user-profile-load',
+          name: 'User Profile Load',
+          description: 'Windows loads the user profile (NTUSER.DAT registry hive and profile folders) from disk.',
+          normalDuration: { min: 500, max: 3, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 60, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Large user profile',
+              description: 'Oversized profile folders (Desktop, AppData) slow down the profile load process.',
+              diagnosticCommands: [
+                'Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum',
+                'Get-ChildItem "$env:USERPROFILE\\AppData" -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum'
+              ]
+            },
+            {
+              title: 'Corrupted NTUSER.DAT',
+              description: 'Corrupt registry hive causes repeated retries and repair attempts during load.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\*" | Select-Object ProfileImagePath, State',
+                'reg query "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList" /s'
+              ]
+            },
+            {
+              title: 'Slow disk performance (HDD)',
+              description: 'Mechanical drives significantly slow profile loading especially with large profiles.',
+              diagnosticCommands: [
+                'Get-PhysicalDisk | Select-Object DeviceID, MediaType, HealthStatus, OperationalStatus'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check profile size — profiles over 1 GB cause noticeable delays.',
+            'Look for temporary files that can be cleaned up.',
+            'Consider if NTUSER.DAT is healthy using reg load/unload test.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-group-policy',
+          name: 'Group Policy (Local)',
+          description: 'Local Group Policy objects are applied to the user session.',
+          normalDuration: { min: 200, max: 2, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Complex local policies with WMI filters',
+              description: 'WMI filter evaluation on slow hardware adds significant processing time.',
+              diagnosticCommands: [
+                'gpresult /R /SCOPE USER',
+                'Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" -MaxEvents 20 | Select-Object TimeCreated, Id, Message'
+              ]
+            },
+            {
+              title: 'Software restriction or AppLocker policies',
+              description: 'Security policies that scan executables add overhead during policy application.',
+              diagnosticCommands: [
+                'Get-AppLockerPolicy -Effective | Select-Object -ExpandProperty RuleCollections',
+                'gpresult /H "$env:TEMP\\gpresult.html"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check Group Policy operational log for slow CSEs (Client-Side Extensions).',
+            'Use gpresult /H to generate an HTML report of applied policies.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-shell-initialization',
+          name: 'Shell Initialization',
+          description: 'Windows Explorer shell (explorer.exe) starts, loading the desktop, taskbar, and system tray.',
+          normalDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Shell extensions and context menu handlers',
+              description: 'Third-party shell extensions loaded by explorer.exe can significantly delay initialization.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved" | Format-List',
+                'Get-Process explorer | Select-Object Id, CPU, WorkingSet64, StartTime'
+              ]
+            },
+            {
+              title: 'High disk I/O from concurrent startup processes',
+              description: 'Multiple programs starting simultaneously saturate disk bandwidth.',
+              diagnosticCommands: [
+                'Get-Counter "\\PhysicalDisk(_Total)\\% Disk Time"',
+                'Get-Counter "\\PhysicalDisk(_Total)\\Current Disk Queue Length"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Autoruns (Sysinternals) to review shell extensions.',
+            'Check Task Manager startup impact ratings.',
+            'Monitor disk queue length during login.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-startup-programs',
+          name: 'Startup Programs',
+          description: 'Applications configured to run at login are launched (Run keys, Startup folder, scheduled tasks).',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 15, max: 120, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Too many startup programs',
+              description: 'Excessive startup entries compete for CPU, RAM, and disk resources.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-ItemProperty "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location'
+              ]
+            },
+            {
+              title: 'Antivirus performing full scan at login',
+              description: 'AV solutions triggering scans on startup programs cause cascading delays.',
+              diagnosticCommands: [
+                'Get-MpComputerStatus | Select-Object QuickScanStartTime, FullScanStartTime, AntivirusEnabled',
+                'Get-Process | Where-Object { $_.CPU -gt 30 } | Select-Object Name, CPU, WorkingSet64'
+              ]
+            },
+            {
+              title: 'Network-dependent startup apps waiting for connectivity',
+              description: 'Applications requiring network access stall if the network is not yet ready.',
+              diagnosticCommands: [
+                'Get-NetConnectionProfile | Select-Object Name, InterfaceAlias, NetworkCategory, IPv4Connectivity'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Task Manager > Startup tab to review startup impact.',
+            'Disable unnecessary startup programs.',
+            'Check Run registry keys for unexpected entries.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'local-user-environment-ready',
+          name: 'User Environment Ready',
+          description: 'Desktop is fully loaded and responsive — the user can begin working.',
+          normalDuration: { min: 0, max: 2, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Background processes still initializing',
+              description: 'Desktop appears but remains sluggish while background tasks complete.',
+              diagnosticCommands: [
+                'Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Wait 1-2 minutes after desktop appears before measuring responsiveness.',
+            'Check Resource Monitor for disk and CPU activity.'
+          ],
+          isUserAction: false
+        }
+      ],
+
+      domain: [
+        {
+          id: 'domain-credential-input',
+          name: 'Credential Input',
+          description: 'User enters domain credentials (DOMAIN\\user or user@domain) on the login screen.',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'none',
+          rootCauses: [],
+          diagnosticTips: ['Ensure keyboard and input devices are responsive.'],
+          isUserAction: true
+        },
+        {
+          id: 'domain-secure-channel-verification',
+          name: 'Secure Channel Verification',
+          description: 'The computer verifies its secure channel (machine account trust) with the domain controller.',
+          normalDuration: { min: 100, max: 500, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Broken computer trust relationship',
+              description: 'Machine account password is out of sync with AD, causing secure channel failure and NTLM fallback.',
+              diagnosticCommands: [
+                'Test-ComputerSecureChannel -Verbose',
+                'nltest /sc_verify:$($(Get-CimInstance Win32_ComputerSystem).Domain)'
+              ]
+            },
+            {
+              title: 'Network connectivity to DC is intermittent',
+              description: 'Unreliable network causes secure channel verification retries and timeouts.',
+              diagnosticCommands: [
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'Test-Connection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Count 4'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Run Test-ComputerSecureChannel to verify trust.',
+            'If broken, rejoin the domain or use Test-ComputerSecureChannel -Repair.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-dns-lookup',
+          name: 'DNS Lookup',
+          description: 'DNS resolution of domain SRV records to locate available domain controllers.',
+          normalDuration: { min: 10, max: 200, unit: 'ms' },
+          delayedDuration: { min: 1, max: 15, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'DNS server misconfiguration',
+              description: 'Client DNS settings point to slow, unreachable, or non-AD-integrated DNS servers.',
+              diagnosticCommands: [
+                'Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object InterfaceAlias, ServerAddresses',
+                'Resolve-DnsName -Name _ldap._tcp.dc._msdcs.$($(Get-CimInstance Win32_ComputerSystem).Domain) -Type SRV'
+              ]
+            },
+            {
+              title: 'DNS SRV records missing or stale',
+              description: 'Missing _ldap._tcp SRV records prevent DC location, causing long timeouts.',
+              diagnosticCommands: [
+                'nslookup -type=SRV _ldap._tcp.$($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'ipconfig /displaydns | Select-String "Record Name|A \\(Host\\)"'
+              ]
+            },
+            {
+              title: 'DNS timeout due to unreachable server',
+              description: 'Primary DNS server is down, causing fallback to secondary with timeout delays.',
+              diagnosticCommands: [
+                'nslookup $($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'Test-NetConnection -ComputerName $($(Get-DnsClientServerAddress -AddressFamily IPv4 | Select-Object -First 1).ServerAddresses[0]) -Port 53'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Ensure DNS points to AD-integrated DNS servers.',
+            'Test SRV record resolution for _ldap._tcp records.',
+            'Check ipconfig /all for correct DNS configuration.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-dc-locator',
+          name: 'DC Locator',
+          description: 'The DC Locator service identifies the optimal domain controller based on AD site topology.',
+          normalDuration: { min: 50, max: 500, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Incorrect AD site assignment',
+              description: 'Client is assigned to a remote AD site, causing authentication with a distant DC.',
+              diagnosticCommands: [
+                'nltest /dsgetsite',
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) /force'
+              ]
+            },
+            {
+              title: 'All nearby DCs are unavailable',
+              description: 'Local site DCs are offline, causing fallback to remote DCs with higher latency.',
+              diagnosticCommands: [
+                'nltest /dnsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain)',
+                'Get-ADDomainController -Filter * | Select-Object Name, Site, IPv4Address, IsGlobalCatalog'
+              ]
+            },
+            {
+              title: 'Subnet-to-site mapping missing',
+              description: 'Client subnet is not mapped in AD Sites and Services, preventing optimal DC selection.',
+              diagnosticCommands: [
+                'nltest /dsgetsite',
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) /try_next_closest_site'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Verify AD site assignment with nltest /dsgetsite.',
+            'Check subnet-to-site mappings in AD Sites and Services.',
+            'Use nltest /dsgetdc with /force to test DC discovery.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-kerberos-as-req',
+          name: 'Kerberos AS-REQ',
+          description: 'Client sends an Authentication Service Request to the KDC (Key Distribution Center) on the domain controller.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Clock skew exceeds 5-minute Kerberos tolerance',
+              description: 'Time difference between client and DC exceeds the default 5-minute maximum, causing Kerberos to fail.',
+              diagnosticCommands: [
+                'w32tm /query /status',
+                'w32tm /stripchart /computer:$($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") /samples:3'
+              ]
+            },
+            {
+              title: 'Kerberos port 88 blocked by firewall',
+              description: 'Network firewall blocks UDP/TCP port 88, preventing Kerberos authentication entirely.',
+              diagnosticCommands: [
+                'Test-NetConnection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Port 88',
+                'klist'
+              ]
+            },
+            {
+              title: 'KDC service not running on domain controller',
+              description: 'The Kerberos Key Distribution Center service on the DC is stopped or crashed.',
+              diagnosticCommands: [
+                'nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) /KDC',
+                'klist tgt'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check system clock synchronization with w32tm /query /status.',
+            'Ensure port 88 (Kerberos) is open to domain controllers.',
+            'Review Kerberos event log for authentication failures.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-kerberos-tgt-issued',
+          name: 'Kerberos TGT Issued',
+          description: 'KDC validates credentials and issues a Ticket Granting Ticket (TGT) to the client.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 2, max: 15, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'DC under heavy authentication load',
+              description: 'Domain controller is overloaded with authentication requests (e.g., morning rush), delaying TGT issuance.',
+              diagnosticCommands: [
+                'Test-Connection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Count 4',
+                'nltest /sc_query:$($(Get-CimInstance Win32_ComputerSystem).Domain)'
+              ]
+            },
+            {
+              title: 'Account lockout or restriction',
+              description: 'Account lockout policies or logon hour restrictions delay or prevent TGT issuance.',
+              diagnosticCommands: [
+                'net user %USERNAME% /domain',
+                'Get-ADUser $env:USERNAME -Properties LockedOut, LockoutTime, BadLogonCount'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use klist to verify TGT was issued and check expiry.',
+            'Check DC performance counters for authentication throughput.',
+            'Verify account is not locked out with net user /domain.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-ldap-user-lookup',
+          name: 'LDAP User Lookup',
+          description: 'LDAP query to Active Directory retrieves user object attributes, group memberships, and account policies.',
+          normalDuration: { min: 50, max: 500, unit: 'ms' },
+          delayedDuration: { min: 2, max: 20, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'LDAP port 389 blocked or slow',
+              description: 'Firewall rules or network congestion affecting LDAP queries to the domain controller.',
+              diagnosticCommands: [
+                'Test-NetConnection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Port 389',
+                'Test-NetConnection -ComputerName $($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","") -Port 3268'
+              ]
+            },
+            {
+              title: 'Excessive group memberships (token bloat)',
+              description: 'User belongs to hundreds of groups, causing large LDAP result sets and token bloat.',
+              diagnosticCommands: [
+                'whoami /groups | Measure-Object -Line',
+                '(whoami /groups /fo csv | ConvertFrom-Csv).Count'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check LDAP connectivity on ports 389 and 3268 (Global Catalog).',
+            'Review user group membership count — over 100 groups causes noticeable delays.',
+            'Check AD replication health if attributes seem stale.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-security-token-creation',
+          name: 'Security Token Creation',
+          description: 'Windows creates an access token containing domain user SID, all group SIDs, and privileges.',
+          normalDuration: { min: 50, max: 300, unit: 'ms' },
+          delayedDuration: { min: 1, max: 10, unit: 'seconds' },
+          delayRisk: 'medium',
+          rootCauses: [
+            {
+              title: 'Token bloat from excessive group memberships',
+              description: 'Hundreds of domain and nested group SIDs cause MaxTokenSize to be exceeded or slow token construction.',
+              diagnosticCommands: [
+                'whoami /groups | Measure-Object -Line',
+                'reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa\\Kerberos\\Parameters" /v MaxTokenSize'
+              ]
+            },
+            {
+              title: 'SID history accumulation from migrations',
+              description: 'Migrated accounts carry SID history entries that inflate token size.',
+              diagnosticCommands: [
+                'whoami /all',
+                'Get-ADUser $env:USERNAME -Properties SIDHistory | Select-Object -ExpandProperty SIDHistory'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check total group count with whoami /groups.',
+            'MaxTokenSize default is 12,000 bytes — increase if needed via registry.',
+            'Review and clean up unnecessary group memberships.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-user-profile-load',
+          name: 'User Profile Load',
+          description: 'User profile is loaded — for roaming profiles, this includes downloading the profile from a network share.',
+          normalDuration: { min: 500, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 300, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Large roaming profile',
+              description: 'Roaming profile over 1 GB must be downloaded from the network share at each login.',
+              diagnosticCommands: [
+                'Get-CimInstance Win32_UserProfile | Where-Object { -not $_.Special } | Select-Object LocalPath, RoamingConfigured, LastUseTime',
+                'Get-ChildItem $env:USERPROFILE -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum'
+              ]
+            },
+            {
+              title: 'Slow network share hosting roaming profiles',
+              description: 'File server hosting profiles is overloaded or connected via slow WAN link.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKCU:\\Volatile Environment" | Select-Object HOMESHARE, HOMEDRIVE',
+                'Test-Path "\\\\fileserver\\profiles$\\%USERNAME%"'
+              ]
+            },
+            {
+              title: 'Corrupted NTUSER.DAT hive',
+              description: 'Corrupt registry hive triggers repair attempts, significantly delaying profile load.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\*" | Select-Object ProfileImagePath, State, Guid',
+                'Get-WinEvent -LogName "Application" -MaxEvents 20 | Where-Object { $_.ProviderName -eq "Microsoft-Windows-User Profiles Service" }'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check profile size — roaming profiles over 1 GB cause major delays.',
+            'Consider implementing Folder Redirection to reduce roaming profile size.',
+            'Monitor file server performance during peak login times.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-folder-redirection',
+          name: 'Folder Redirection',
+          description: 'Redirected folders (Documents, Desktop, AppData) are mapped to network locations via Group Policy.',
+          normalDuration: { min: 200, max: 2, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 60, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Network share for redirected folders is slow or unreachable',
+              description: 'The file server hosting redirected folders is overloaded, causing folder access delays.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders" | Format-List',
+                'Test-Path "$($(Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders").Personal)"'
+              ]
+            },
+            {
+              title: 'Offline Files sync conflicts',
+              description: 'Offline Files (CSC) sync encounters conflicts during login, stalling folder redirection.',
+              diagnosticCommands: [
+                'Get-WmiObject Win32_OfflineFilesCache | Select-Object Active, Enabled, Location',
+                'Get-WinEvent -LogName "Microsoft-Windows-OfflineFiles/Operational" -MaxEvents 10'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Verify network share accessibility from the client.',
+            'Check Offline Files sync status and conflicts.',
+            'Ensure DFS paths resolve correctly if using DFS namespaces.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-group-policy-processing',
+          name: 'Group Policy Processing',
+          description: 'Domain Group Policy Objects (GPOs) are downloaded from SYSVOL and applied by Client-Side Extensions (CSEs).',
+          normalDuration: { min: 2, max: 15, unit: 'seconds' },
+          delayedDuration: { min: 30, max: 300, unit: 'seconds' },
+          delayRisk: 'critical',
+          rootCauses: [
+            {
+              title: 'Too many GPOs linked to user/computer OUs',
+              description: 'Dozens of GPOs must each be evaluated and applied, multiplying processing time.',
+              diagnosticCommands: [
+                'gpresult /R /SCOPE USER',
+                'gpresult /R /SCOPE COMPUTER',
+                '(gpresult /R /SCOPE USER 2>&1 | Select-String "Applied Group Policy Objects" -Context 0,50).Context.PostContext | Where-Object { $_ -match "\\S" }'
+              ]
+            },
+            {
+              title: 'Slow CSEs (Software Installation, Folder Redirection)',
+              description: 'Certain Client-Side Extensions take much longer than others, especially Software Installation and Folder Redirection.',
+              diagnosticCommands: [
+                'Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" -MaxEvents 50 | Where-Object { $_.Id -in @(4016,5016) } | Select-Object TimeCreated, Message',
+                'Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" -MaxEvents 10 | Where-Object { $_.Id -eq 8002 } | Select-Object TimeCreated, Message'
+              ]
+            },
+            {
+              title: 'SYSVOL replication issues',
+              description: 'SYSVOL content is inconsistent across DCs, causing GPO download failures or retries.',
+              diagnosticCommands: [
+                'Test-Path "\\\\$($(Get-CimInstance Win32_ComputerSystem).Domain)\\SYSVOL"',
+                'dcdiag /test:sysvolcheck /s:$($(nltest /dsgetdc:$($(Get-CimInstance Win32_ComputerSystem).Domain) | Select-String "DC:") -replace ".*DC: \\\\\\\\","" -replace "\\s.*","")'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check GP operational log for slow CSEs (events 4016/5016).',
+            'Use gpresult /H for a detailed HTML report.',
+            'Review GPO count — more than 30 GPOs usually indicates cleanup is needed.',
+            'Ensure SYSVOL is reachable with Test-Path.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-login-script-execution',
+          name: 'Login Script Execution',
+          description: 'Logon scripts (batch files, VBScript, PowerShell) assigned via GPO or user properties are executed.',
+          normalDuration: { min: 1, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 15, max: 120, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Long-running logon scripts',
+              description: 'Legacy batch or VBScript logon scripts perform slow operations (network mapping, inventory, software checks).',
+              diagnosticCommands: [
+                'Get-ChildItem "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Group Policy\\State\\*\\Scripts\\Logon" -ErrorAction SilentlyContinue',
+                'Get-ChildItem "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Group Policy\\State\\Machine\\Scripts\\Startup" -ErrorAction SilentlyContinue'
+              ]
+            },
+            {
+              title: 'Logon script accessing unavailable network resources',
+              description: 'Script attempts to connect to offline servers or slow shares, waiting for timeout on each.',
+              diagnosticCommands: [
+                'Get-Content "\\\\$($(Get-CimInstance Win32_ComputerSystem).Domain)\\NETLOGON\\*.bat" -ErrorAction SilentlyContinue | Select-Object -First 50',
+                'Get-Content "\\\\$($(Get-CimInstance Win32_ComputerSystem).Domain)\\NETLOGON\\*.vbs" -ErrorAction SilentlyContinue | Select-Object -First 50'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Review logon scripts in NETLOGON share for slow operations.',
+            'Consider migrating legacy scripts to Group Policy Preferences.',
+            'Run logon scripts asynchronously if possible.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-drive-printer-mapping',
+          name: 'Drive/Printer Mapping',
+          description: 'Network drives and printers are mapped via GPO preferences, logon scripts, or Group Policy.',
+          normalDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 120, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Offline or slow file servers for drive mappings',
+              description: 'Network drive targets are unreachable or slow, causing net use commands to timeout.',
+              diagnosticCommands: [
+                'net use',
+                'Get-SmbMapping | Select-Object LocalPath, RemotePath, Status',
+                'Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -like "\\\\*" }'
+              ]
+            },
+            {
+              title: 'Print server or printer offline',
+              description: 'Printer connections attempt to contact unavailable print servers, each with its own timeout.',
+              diagnosticCommands: [
+                'Get-Printer | Select-Object Name, PortName, PrinterStatus',
+                'Get-PrintJob -PrinterName * -ErrorAction SilentlyContinue'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Check net use output for disconnected or errored drives.',
+            'Verify print server availability.',
+            'Use GP Preferences with Item-Level Targeting for conditional mappings.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-shell-initialization',
+          name: 'Shell Initialization',
+          description: 'Windows Explorer shell starts, loading the desktop, taskbar, system tray, and any deployed shortcuts.',
+          normalDuration: { min: 1, max: 5, unit: 'seconds' },
+          delayedDuration: { min: 10, max: 60, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Shell extensions and context menu handlers',
+              description: 'Third-party and enterprise shell extensions loaded by explorer.exe delay initialization.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved" | Format-List',
+                'Get-Process explorer | Select-Object Id, CPU, WorkingSet64, StartTime'
+              ]
+            },
+            {
+              title: 'Redirected Desktop/Start Menu on slow network',
+              description: 'Desktop and Start Menu content served from a network share loads slowly.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders" | Select-Object Desktop, "Start Menu"',
+                'Test-Path "$($(Get-ItemProperty "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders").Desktop)"'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Autoruns (Sysinternals) to review shell extensions.',
+            'Check if Desktop/Start Menu are redirected to network locations.',
+            'Monitor explorer.exe CPU and memory usage at startup.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-startup-programs',
+          name: 'Startup Programs',
+          description: 'Applications configured to run at login launch, including those deployed via GPO software installation.',
+          normalDuration: { min: 2, max: 10, unit: 'seconds' },
+          delayedDuration: { min: 15, max: 120, unit: 'seconds' },
+          delayRisk: 'high',
+          rootCauses: [
+            {
+              title: 'Too many startup programs (local + GPO-deployed)',
+              description: 'Combination of local startup entries and GPO-deployed software creates excessive startup load.',
+              diagnosticCommands: [
+                'Get-ItemProperty "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-ItemProperty "HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"',
+                'Get-CimInstance Win32_StartupCommand | Select-Object Name, Command, Location'
+              ]
+            },
+            {
+              title: 'Enterprise agents and monitoring tools',
+              description: 'SCCM client, antivirus, DLP, and other enterprise agents all initialize concurrently at login.',
+              diagnosticCommands: [
+                'Get-Process | Where-Object { $_.CPU -gt 10 } | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64',
+                'Get-Service | Where-Object { $_.StartType -eq "Automatic" -and $_.Status -eq "Running" } | Measure-Object'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Use Task Manager > Startup tab to review startup impact.',
+            'Audit enterprise agents for startup performance impact.',
+            'Consider staggering startup programs with delayed start.'
+          ],
+          isUserAction: false
+        },
+        {
+          id: 'domain-user-environment-ready',
+          name: 'User Environment Ready',
+          description: 'Desktop is fully loaded, all drives/printers mapped, and the user environment is responsive.',
+          normalDuration: { min: 0, max: 2, unit: 'seconds' },
+          delayedDuration: { min: 5, max: 30, unit: 'seconds' },
+          delayRisk: 'low',
+          rootCauses: [
+            {
+              title: 'Background processes still initializing',
+              description: 'Desktop appears but remains sluggish while background sync, updates, and agents complete.',
+              diagnosticCommands: [
+                'Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name, CPU, WorkingSet64'
+              ]
+            }
+          ],
+          diagnosticTips: [
+            'Wait 1-2 minutes after desktop appears before measuring responsiveness.',
+            'Check Resource Monitor for remaining disk and CPU activity.',
+            'Verify all mapped drives show as connected.'
+          ],
+          isUserAction: false
+        }
+      ]
+    };
 
     /* ========================================
        State
