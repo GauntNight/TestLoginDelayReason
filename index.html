@@ -35,6 +35,11 @@
       --color-text-secondary: #64748b;
       --color-text-muted: #94a3b8;
 
+      /* Info callout */
+      --color-info: #3b82f6;
+      --color-info-bg: #eff6ff;
+      --color-info-border: #bfdbfe;
+
       /* Spacing scale */
       --space-xs: 0.25rem;
       --space-sm: 0.5rem;
@@ -92,6 +97,18 @@
       background-color: var(--color-bg);
       line-height: 1.6;
       min-height: 100vh;
+    }
+
+    /* ========================================
+       Focus Indicators (Accessibility)
+       ======================================== */
+    :focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
+    }
+
+    :focus:not(:focus-visible) {
+      outline: none;
     }
 
     /* ========================================
@@ -506,6 +523,30 @@
     }
 
     /* ========================================
+       Edge Case Callout (Info Box)
+       ======================================== */
+    .callout {
+      background: var(--color-info-bg);
+      border: 1px solid var(--color-info-border);
+      border-left: 4px solid var(--color-info);
+      border-radius: var(--radius-sm);
+      padding: var(--space-sm) var(--space-md);
+      margin-top: var(--space-sm);
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      line-height: 1.5;
+    }
+
+    .callout__title {
+      font-weight: 700;
+      color: var(--color-info);
+      margin-bottom: var(--space-xs);
+      display: flex;
+      align-items: center;
+      gap: var(--space-xs);
+    }
+
+    /* ========================================
        Delay Simulator Toggle
        ======================================== */
     .step__flag-toggle {
@@ -707,20 +748,18 @@
         padding: 0.25cm 0;
       }
 
-      .nav__tab {
-        border: 1px solid #999999;
-        box-shadow: none;
+      /* Hide interactive elements in print */
+      .nav {
+        display: none;
       }
 
-      .nav__tab--active {
-        background-color: #000000;
-        color: #ffffff;
+      .step__flag-toggle {
+        display: none !important;
       }
 
-      .timeline__step {
-        box-shadow: none;
-        border: 1px solid #cccccc;
-        break-inside: avoid;
+      /* Single-column layout */
+      .summary {
+        grid-template-columns: 1fr 1fr;
       }
 
       .summary__card {
@@ -728,19 +767,58 @@
         border: 1px solid #cccccc;
       }
 
-      /* Expand all details for print */
-      .step__details {
-        display: block;
+      .timeline {
+        padding-left: 0;
       }
 
-      .step__details[open] summary,
+      .timeline::before {
+        display: none;
+      }
+
+      .timeline__step {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .timeline__step::before {
+        display: none;
+      }
+
+      /* Force all details open for print */
+      .step__details {
+        display: block !important;
+      }
+
+      .step__details-content {
+        display: block !important;
+        animation: none !important;
+      }
+
       .step__details summary {
-        font-weight: bold;
+        pointer-events: none;
+      }
+
+      .step__details summary::before {
+        display: none;
       }
 
       .timeline__step--flagged {
         border-color: #000000;
         border-width: 2px;
+      }
+
+      /* Callout print styles */
+      .callout {
+        border-left-color: #666;
+        background: #f5f5f5;
+      }
+
+      /* Clean pagination */
+      .flagged-summary {
+        break-inside: avoid;
+        page-break-inside: avoid;
       }
     }
   </style>
@@ -766,7 +844,7 @@
       </section>
 
       <!-- Timeline -->
-      <section class="timeline" aria-label="Login step timeline" id="timeline">
+      <section class="timeline" role="list" aria-label="Login step timeline" id="timeline">
         <!-- Rendered by JS -->
       </section>
     </main>
@@ -774,6 +852,7 @@
     <!-- Footer -->
     <footer class="app__footer">
       <p>Windows Login Flow Diagnostic Tool &mdash; For IT administrators and system engineers</p>
+      <p id="footer-date"></p>
     </footer>
   </div>
 
@@ -781,6 +860,54 @@
     /* ========================================
        Data Constants
        ======================================== */
+
+    /**
+     * Edge case callouts keyed by step ID.
+     * Each maps to an array of { title, text } objects.
+     */
+    var EDGE_CASE_CALLOUTS = {
+      'domain-kerberos-as-req': [
+        {
+          title: 'Cached / Offline Domain Login',
+          text: 'If the domain controller is unreachable, Windows can use cached credentials (last 10-25 logins by default). Kerberos is skipped entirely and NTLM cached logon is used. Group Policy will not refresh and new password changes will not take effect until DC connectivity is restored.'
+        }
+      ],
+      'domain-user-profile-load': [
+        {
+          title: 'First-Time Login (New Profile)',
+          text: 'When a user logs into a machine for the first time, Windows must create a brand-new profile from the Default profile template. This is significantly slower than loading an existing profile and can take 30-90 seconds on HDDs. Subsequent logins will be faster.'
+        },
+        {
+          title: 'Mandatory / Roaming Profile Failures',
+          text: 'Mandatory profiles (.man extension) are read-only and downloaded every login. If the profile share is unreachable, login may fail entirely. Roaming profiles that fail to sync will fall back to a local cached copy, but changes may be lost. Check Event ID 1509/1500 in the Application log.'
+        }
+      ],
+      'domain-secure-channel-verification': [
+        {
+          title: 'VPN / Remote Login',
+          text: 'When connecting via VPN, the secure channel verification depends on VPN tunnel being established first. Always-On VPN (device tunnel) enables pre-logon domain connectivity. Without it, cached credentials are used for initial login, and domain authentication occurs after VPN connects — potentially triggering a second round of GP processing.'
+        }
+      ],
+      'domain-group-policy-processing': [
+        {
+          title: 'Multiple GPOs with WMI Filters',
+          text: 'Each GPO with a WMI filter requires a separate WMI query evaluation. If you have 10+ GPOs with WMI filters, these queries run sequentially and can add 5-30 seconds depending on query complexity and hardware speed. Consider consolidating WMI-filtered GPOs or using Item-Level Targeting in GP Preferences instead.'
+        }
+      ],
+      'local-user-profile-load': [
+        {
+          title: 'First-Time Login (New Profile)',
+          text: 'The first login for a user on a machine creates a new profile from the Default template. This takes significantly longer than subsequent logins as the entire profile structure must be initialized, registry hive created, and default apps provisioned.'
+        }
+      ],
+      'local-group-policy': [
+        {
+          title: 'Multiple GPOs with WMI Filters',
+          text: 'Even local GPOs can contain WMI filters. Each filter evaluation adds latency, especially on older hardware. Use "gpresult /R" to see which GPOs and filters are being evaluated.'
+        }
+      ]
+    };
+
     const LOGIN_STEPS = {
       local: [
         {
@@ -1578,7 +1705,6 @@
 
     /**
      * Convert a duration object to a normalized millisecond value.
-     * Handles mixed units (e.g., { min: 500, max: 3, unit: 'seconds' } where min is in ms).
      */
     function durationToMs(value, unit) {
       if (unit === 'ms') return value;
@@ -1591,7 +1717,6 @@
      */
     function formatDuration(min, max, unit) {
       var displayUnit = unit === 'ms' ? 'ms' : 's';
-      // Normalize: if unit is seconds but min looks like ms (>= 100), display as mixed
       if (unit === 'seconds' && min >= 100) {
         return min + 'ms – ' + max + 's';
       }
@@ -1653,6 +1778,13 @@
       return mins + 'm ' + remainSecs + 's';
     }
 
+    /**
+     * Escape HTML entities for safe rendering.
+     */
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
     /* ========================================
        Rendering Functions
        ======================================== */
@@ -1674,6 +1806,10 @@
         btn.className = 'nav__tab' + (types[i].key === selectedType ? ' nav__tab--active' : '');
         btn.setAttribute('role', 'tab');
         btn.setAttribute('aria-selected', types[i].key === selectedType ? 'true' : 'false');
+        btn.setAttribute('aria-label', types[i].label + ' flow');
+        btn.setAttribute('tabindex', types[i].key === selectedType ? '0' : '-1');
+        btn.id = 'tab-' + types[i].key;
+        btn.setAttribute('aria-controls', 'tabpanel-' + types[i].key);
         btn.setAttribute('data-type', types[i].key);
         btn.textContent = types[i].label;
         nav.appendChild(btn);
@@ -1712,11 +1848,29 @@
       for (var i = 0; i < cards.length; i++) {
         var card = document.createElement('div');
         card.className = 'summary__card';
+        card.setAttribute('role', 'status');
+        card.setAttribute('aria-label', cards[i].label + ': ' + cards[i].value);
         card.innerHTML =
           '<div class="summary__label">' + cards[i].label + '</div>' +
           '<div class="summary__value">' + cards[i].value + '</div>';
         container.appendChild(card);
       }
+    }
+
+    /**
+     * Build callout HTML for a given step ID.
+     */
+    function renderCallouts(stepId) {
+      var callouts = EDGE_CASE_CALLOUTS[stepId];
+      if (!callouts || callouts.length === 0) return '';
+      var html = '';
+      for (var c = 0; c < callouts.length; c++) {
+        html += '<div class="callout" role="note" aria-label="' + escapeHtml(callouts[c].title) + '">' +
+          '<div class="callout__title">\u2139\uFE0F ' + escapeHtml(callouts[c].title) + '</div>' +
+          '<p>' + escapeHtml(callouts[c].text) + '</p>' +
+          '</div>';
+      }
+      return html;
     }
 
     /**
@@ -1740,6 +1894,8 @@
           (isUserFlagged ? ' timeline__step--user-flagged' : '');
         card.setAttribute('data-step-id', step.id);
         card.setAttribute('data-step-index', i);
+        card.setAttribute('role', 'listitem');
+        card.setAttribute('aria-label', 'Step ' + (i + 1) + ': ' + step.name + ' — risk: ' + step.delayRisk);
 
         var html =
           '<div class="step__header">' +
@@ -1747,41 +1903,46 @@
               '<span class="step__number">Step ' + (i + 1) + '</span> ' +
               '<span class="step__name">' + step.name + '</span>' +
             '</div>' +
-            '<span class="badge ' + riskBadgeClass(step.delayRisk) + '">' + step.delayRisk + '</span>' +
+            '<span class="badge ' + riskBadgeClass(step.delayRisk) + '" role="status" aria-label="Risk level: ' + step.delayRisk + '">' + step.delayRisk + '</span>' +
           '</div>' +
           '<p class="step__description">' + step.description + '</p>' +
           '<div class="step__meta">' +
-            '<span class="step__duration">Normal: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '</span>' +
+            '<span class="step__duration" aria-label="Normal duration: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '">Normal: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '</span>' +
           '</div>';
 
         // Add "Mark as slow" toggle for steps with risk >= low
         if (step.delayRisk !== 'none') {
-          html += '<label class="step__flag-toggle">' +
-            '<input type="checkbox" data-flag-step="' + step.id + '"' + (isUserFlagged ? ' checked' : '') + '>' +
+          html += '<label class="step__flag-toggle" aria-label="Mark ' + step.name + ' as experiencing delay">' +
+            '<input type="checkbox" data-flag-step="' + step.id + '"' + (isUserFlagged ? ' checked' : '') +
+            ' aria-label="Flag ' + step.name + ' as slow">' +
             '\u26A0 Mark as slow' +
             '</label>';
         }
 
+        // Edge case callouts
+        html += renderCallouts(step.id);
+
         // Add expandable root cause details only for steps with delayRisk >= 'low'
         if (step.delayRisk !== 'none' && step.rootCauses && step.rootCauses.length > 0) {
-          html += '<details class="step__details"' + (isUserFlagged ? ' open' : '') + '>' +
-            '<summary>Root Causes &amp; Diagnostics (' + step.rootCauses.length + ')</summary>' +
+          html += '<details class="step__details"' + (isUserFlagged ? ' open' : '') +
+            ' aria-label="Root causes and diagnostics for ' + step.name + '">' +
+            '<summary role="button" aria-expanded="' + (isUserFlagged ? 'true' : 'false') + '">Root Causes &amp; Diagnostics (' + step.rootCauses.length + ')</summary>' +
             '<div class="step__details-content">';
 
           for (var j = 0; j < step.rootCauses.length; j++) {
             var rc = step.rootCauses[j];
             html += '<div class="root-cause root-cause--' + step.delayRisk + '">' +
               '<div class="root-cause__title">' +
-                '<span class="root-cause__severity root-cause__severity--' + step.delayRisk + '" aria-label="' + step.delayRisk + ' severity"></span>' +
+                '<span class="root-cause__severity root-cause__severity--' + step.delayRisk + '" aria-hidden="true"></span>' +
                 rc.title +
               '</div>' +
               '<p class="root-cause__description">' + rc.description + '</p>';
 
             if (rc.diagnosticCommands && rc.diagnosticCommands.length > 0) {
               html += '<div class="root-cause__commands-label">Diagnostic Commands:</div>' +
-                '<pre class="root-cause__commands">';
+                '<pre class="root-cause__commands" role="code" aria-label="Diagnostic commands for ' + escapeHtml(rc.title) + '">';
               for (var k = 0; k < rc.diagnosticCommands.length; k++) {
-                html += rc.diagnosticCommands[k];
+                html += escapeHtml(rc.diagnosticCommands[k]);
                 if (k < rc.diagnosticCommands.length - 1) html += '\n';
               }
               html += '</pre>';
@@ -1831,6 +1992,7 @@
       section.id = 'flagged-summary';
       section.className = 'flagged-summary';
       section.setAttribute('aria-label', 'Flagged delays summary');
+      section.setAttribute('role', 'region');
 
       var html = '<div class="flagged-summary__title">\u26A0 Flagged Delays Summary (' + flaggedItems.length + ')</div>';
 
@@ -1852,7 +2014,7 @@
           html += '</ul>';
 
           if (allCommands.length > 0) {
-            html += '<pre class="flagged-summary__commands">' + allCommands.join('\n') + '</pre>';
+            html += '<pre class="flagged-summary__commands" role="code">' + allCommands.map(escapeHtml).join('\n') + '</pre>';
           }
         }
 
@@ -1896,6 +2058,30 @@
       }
     });
 
+    // Keyboard navigation for tabs (arrow keys)
+    document.querySelector('.nav').addEventListener('keydown', function(e) {
+      var tabs = Array.from(document.querySelectorAll('.nav__tab'));
+      var currentIndex = tabs.indexOf(document.activeElement);
+      if (currentIndex === -1) return;
+
+      var newIndex = -1;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        newIndex = (currentIndex + 1) % tabs.length;
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        newIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      } else if (e.key === 'Home') {
+        newIndex = 0;
+      } else if (e.key === 'End') {
+        newIndex = tabs.length - 1;
+      }
+
+      if (newIndex >= 0) {
+        e.preventDefault();
+        tabs[newIndex].focus();
+        tabs[newIndex].click();
+      }
+    });
+
     // Event delegation on timeline for flag checkboxes
     document.getElementById('timeline').addEventListener('change', function(e) {
       var checkbox = e.target.closest('[data-flag-step]');
@@ -1915,9 +2101,25 @@
       renderFlaggedSummary();
     });
 
+    // Update aria-expanded on details toggle
+    document.getElementById('timeline').addEventListener('toggle', function(e) {
+      if (e.target.tagName === 'DETAILS') {
+        var summary = e.target.querySelector('summary');
+        if (summary) {
+          summary.setAttribute('aria-expanded', e.target.open ? 'true' : 'false');
+        }
+      }
+    }, true);
+
     /* ========================================
        Initialization
        ======================================== */
+
+    // Set footer generation date
+    document.getElementById('footer-date').textContent = 'Generated: ' + new Date().toLocaleDateString('en-US', {
+      year: 'numeric', month: 'long', day: 'numeric'
+    });
+
     render();
   </script>
 </body>
