@@ -506,6 +506,107 @@
     }
 
     /* ========================================
+       Delay Simulator Toggle
+       ======================================== */
+    .step__flag-toggle {
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+      margin-top: var(--space-sm);
+      padding: var(--space-xs) var(--space-sm);
+      background: var(--color-bg);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      user-select: none;
+      width: fit-content;
+      transition: color 0.2s ease;
+    }
+
+    .step__flag-toggle:hover {
+      color: var(--color-risk-high);
+    }
+
+    .step__flag-toggle input[type="checkbox"] {
+      accent-color: var(--color-risk-high);
+      width: 1rem;
+      height: 1rem;
+      cursor: pointer;
+    }
+
+    .timeline__step--user-flagged {
+      border-color: var(--color-risk-high);
+      border-width: 2px;
+      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15), var(--shadow-md);
+    }
+
+    .timeline__step--user-flagged .step__flag-toggle {
+      color: var(--color-risk-high);
+    }
+
+    /* ========================================
+       Flagged Delays Summary
+       ======================================== */
+    .flagged-summary {
+      background: var(--color-surface);
+      border: 2px solid var(--color-risk-high);
+      border-radius: var(--radius-lg);
+      padding: var(--space-lg);
+      margin-bottom: var(--space-xl);
+      box-shadow: var(--shadow-md);
+    }
+
+    .flagged-summary__title {
+      font-size: var(--font-size-lg);
+      font-weight: 700;
+      color: var(--color-risk-high);
+      margin-bottom: var(--space-md);
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .flagged-summary__step {
+      margin-bottom: var(--space-md);
+      padding: var(--space-sm) var(--space-md);
+      border-left: 3px solid var(--color-risk-high);
+      background: var(--color-risk-high-bg);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    }
+
+    .flagged-summary__step-name {
+      font-weight: 600;
+      font-size: var(--font-size-sm);
+    }
+
+    .flagged-summary__root-causes {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+      padding-left: var(--space-lg);
+      list-style-type: disc;
+    }
+
+    .flagged-summary__root-causes li {
+      margin-bottom: var(--space-xs);
+    }
+
+    .flagged-summary__commands {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: var(--space-sm);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-xs);
+      font-family: var(--font-mono);
+      overflow-x: auto;
+      margin-top: var(--space-sm);
+      white-space: pre;
+      line-height: 1.8;
+    }
+
+    /* ========================================
        Utility
        ======================================== */
     .visually-hidden {
@@ -1469,6 +1570,7 @@
        State
        ======================================== */
     let selectedType = 'local';
+    const flaggedSteps = new Set();
 
     /* ========================================
        Helper Functions
@@ -1585,12 +1687,27 @@
       var container = document.getElementById('summary');
       container.innerHTML = '';
 
+      var flaggedCount = flaggedSteps.size;
+      var flaggedDelayMs = 0;
+      var steps = LOGIN_STEPS[selectedType];
+      for (var f = 0; f < steps.length; f++) {
+        if (flaggedSteps.has(steps[f].id)) {
+          flaggedDelayMs += durationToMs(steps[f].delayedDuration.max, steps[f].delayedDuration.unit) -
+                           durationToMs(steps[f].normalDuration.max, steps[f].normalDuration.unit);
+        }
+      }
+
       var cards = [
         { label: 'Steps', value: stats.stepCount },
         { label: 'Normal Time (max)', value: formatMs(stats.totalNormalMs) },
         { label: 'Worst-Case Time', value: formatMs(stats.totalWorstMs) },
         { label: 'High/Critical Risk', value: stats.highCriticalCount }
       ];
+
+      if (flaggedCount > 0) {
+        cards.push({ label: 'Flagged Steps', value: flaggedCount });
+        cards.push({ label: 'Est. Delay Impact', value: '+' + formatMs(flaggedDelayMs) });
+      }
 
       for (var i = 0; i < cards.length; i++) {
         var card = document.createElement('div');
@@ -1614,10 +1731,13 @@
 
       for (var i = 0; i < steps.length; i++) {
         var step = steps[i];
-        var isFlagged = step.delayRisk === 'high' || step.delayRisk === 'critical';
+        var isRiskFlagged = step.delayRisk === 'high' || step.delayRisk === 'critical';
+        var isUserFlagged = flaggedSteps.has(step.id);
 
         var card = document.createElement('article');
-        card.className = 'timeline__step' + (isFlagged ? ' timeline__step--flagged' : '');
+        card.className = 'timeline__step' +
+          (isRiskFlagged ? ' timeline__step--flagged' : '') +
+          (isUserFlagged ? ' timeline__step--user-flagged' : '');
         card.setAttribute('data-step-id', step.id);
         card.setAttribute('data-step-index', i);
 
@@ -1634,9 +1754,17 @@
             '<span class="step__duration">Normal: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '</span>' +
           '</div>';
 
+        // Add "Mark as slow" toggle for steps with risk >= low
+        if (step.delayRisk !== 'none') {
+          html += '<label class="step__flag-toggle">' +
+            '<input type="checkbox" data-flag-step="' + step.id + '"' + (isUserFlagged ? ' checked' : '') + '>' +
+            '\u26A0 Mark as slow' +
+            '</label>';
+        }
+
         // Add expandable root cause details only for steps with delayRisk >= 'low'
         if (step.delayRisk !== 'none' && step.rootCauses && step.rootCauses.length > 0) {
-          html += '<details class="step__details">' +
+          html += '<details class="step__details"' + (isUserFlagged ? ' open' : '') + '>' +
             '<summary>Root Causes &amp; Diagnostics (' + step.rootCauses.length + ')</summary>' +
             '<div class="step__details-content">';
 
@@ -1681,6 +1809,63 @@
     }
 
     /**
+     * Render the flagged delays summary section.
+     */
+    function renderFlaggedSummary() {
+      var existing = document.getElementById('flagged-summary');
+      if (existing) existing.remove();
+
+      if (flaggedSteps.size === 0) return;
+
+      var steps = LOGIN_STEPS[selectedType];
+      var flaggedItems = [];
+      for (var i = 0; i < steps.length; i++) {
+        if (flaggedSteps.has(steps[i].id)) {
+          flaggedItems.push(steps[i]);
+        }
+      }
+
+      if (flaggedItems.length === 0) return;
+
+      var section = document.createElement('section');
+      section.id = 'flagged-summary';
+      section.className = 'flagged-summary';
+      section.setAttribute('aria-label', 'Flagged delays summary');
+
+      var html = '<div class="flagged-summary__title">\u26A0 Flagged Delays Summary (' + flaggedItems.length + ')</div>';
+
+      for (var i = 0; i < flaggedItems.length; i++) {
+        var step = flaggedItems[i];
+        html += '<div class="flagged-summary__step">' +
+          '<div class="flagged-summary__step-name">' + step.name +
+          ' <span class="badge ' + riskBadgeClass(step.delayRisk) + '">' + step.delayRisk + '</span></div>';
+
+        if (step.rootCauses.length > 0) {
+          html += '<ul class="flagged-summary__root-causes">';
+          var allCommands = [];
+          for (var j = 0; j < step.rootCauses.length; j++) {
+            html += '<li>' + step.rootCauses[j].title + '</li>';
+            if (step.rootCauses[j].diagnosticCommands) {
+              allCommands = allCommands.concat(step.rootCauses[j].diagnosticCommands);
+            }
+          }
+          html += '</ul>';
+
+          if (allCommands.length > 0) {
+            html += '<pre class="flagged-summary__commands">' + allCommands.join('\n') + '</pre>';
+          }
+        }
+
+        html += '</div>';
+      }
+
+      section.innerHTML = html;
+
+      var timeline = document.getElementById('timeline');
+      timeline.parentNode.insertBefore(section, timeline);
+    }
+
+    /**
      * Main render function — orchestrates all rendering.
      */
     function render() {
@@ -1690,6 +1875,7 @@
       renderTabs();
       renderSummary(stats);
       renderTimeline();
+      renderFlaggedSummary();
     }
 
     /* ========================================
@@ -1704,9 +1890,29 @@
       var type = tab.getAttribute('data-type');
       if (type && type !== selectedType) {
         selectedType = type;
+        flaggedSteps.clear();
         render();
         window.scrollTo({ top: 0, behavior: 'smooth' });
       }
+    });
+
+    // Event delegation on timeline for flag checkboxes
+    document.getElementById('timeline').addEventListener('change', function(e) {
+      var checkbox = e.target.closest('[data-flag-step]');
+      if (!checkbox) return;
+
+      var stepId = checkbox.getAttribute('data-flag-step');
+      if (checkbox.checked) {
+        flaggedSteps.add(stepId);
+      } else {
+        flaggedSteps.delete(stepId);
+      }
+
+      var steps = LOGIN_STEPS[selectedType];
+      var stats = calcSummary(steps);
+      renderSummary(stats);
+      renderTimeline();
+      renderFlaggedSummary();
     });
 
     /* ========================================
