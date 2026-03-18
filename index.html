@@ -358,10 +358,19 @@
       display: flex;
       align-items: center;
       gap: var(--space-sm);
+      user-select: none;
+      padding: var(--space-xs) 0;
     }
 
     .step__details summary::-webkit-details-marker {
       display: none;
+    }
+
+    .step__details summary::before {
+      content: '\25B6';
+      font-size: var(--font-size-xs);
+      transition: transform 0.2s ease;
+      display: inline-block;
     }
 
     .step__details[open] summary::before {
@@ -369,9 +378,131 @@
       font-size: var(--font-size-xs);
     }
 
-    .step__details:not([open]) summary::before {
-      content: '\25B6';
+    .step__details-content {
+      overflow: hidden;
+      animation: detailsOpen 0.25s ease-out;
+    }
+
+    @keyframes detailsOpen {
+      from {
+        opacity: 0;
+        max-height: 0;
+        transform: translateY(-8px);
+      }
+      to {
+        opacity: 1;
+        max-height: 2000px;
+        transform: translateY(0);
+      }
+    }
+
+    /* Root cause card */
+    .root-cause {
+      margin-top: var(--space-sm);
+      padding: var(--space-sm) var(--space-md);
+      border-left: 3px solid var(--color-border);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: var(--color-bg);
+    }
+
+    .root-cause--low {
+      border-left-color: var(--color-risk-low);
+    }
+
+    .root-cause--medium {
+      border-left-color: var(--color-risk-medium);
+    }
+
+    .root-cause--high {
+      border-left-color: var(--color-risk-high);
+    }
+
+    .root-cause--critical {
+      border-left-color: var(--color-risk-critical);
+    }
+
+    .root-cause__title {
+      font-size: var(--font-size-sm);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: var(--space-sm);
+    }
+
+    .root-cause__severity {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .root-cause__severity--low {
+      background-color: var(--color-risk-low);
+    }
+
+    .root-cause__severity--medium {
+      background-color: var(--color-risk-medium);
+    }
+
+    .root-cause__severity--high {
+      background-color: var(--color-risk-high);
+    }
+
+    .root-cause__severity--critical {
+      background-color: var(--color-risk-critical);
+    }
+
+    .root-cause__description {
       font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+    }
+
+    .root-cause__commands {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      padding: var(--space-sm);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-xs);
+      font-family: var(--font-mono);
+      overflow-x: auto;
+      margin-top: var(--space-xs);
+      white-space: pre;
+      line-height: 1.8;
+    }
+
+    .root-cause__commands-label {
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--color-text-muted);
+      margin-top: var(--space-sm);
+      margin-bottom: var(--space-xs);
+    }
+
+    /* Diagnostic tips */
+    .diagnostic-tips {
+      margin-top: var(--space-sm);
+      padding-top: var(--space-sm);
+      border-top: 1px solid var(--color-border);
+    }
+
+    .diagnostic-tips__label {
+      font-size: var(--font-size-xs);
+      font-weight: 600;
+      color: var(--color-text-muted);
+    }
+
+    .diagnostic-tips__list {
+      font-size: var(--font-size-xs);
+      color: var(--color-text-secondary);
+      margin-top: var(--space-xs);
+      padding-left: var(--space-lg);
+      list-style-type: disc;
+    }
+
+    .diagnostic-tips__list li {
+      margin-bottom: var(--space-xs);
     }
 
     /* ========================================
@@ -1503,22 +1634,27 @@
             '<span class="step__duration">Normal: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '</span>' +
           '</div>';
 
-        // Add expandable root cause details if there are root causes
-        if (step.rootCauses && step.rootCauses.length > 0) {
+        // Add expandable root cause details only for steps with delayRisk >= 'low'
+        if (step.delayRisk !== 'none' && step.rootCauses && step.rootCauses.length > 0) {
           html += '<details class="step__details">' +
             '<summary>Root Causes &amp; Diagnostics (' + step.rootCauses.length + ')</summary>' +
             '<div class="step__details-content">';
 
           for (var j = 0; j < step.rootCauses.length; j++) {
             var rc = step.rootCauses[j];
-            html += '<div style="margin-top: var(--space-sm);">' +
-              '<strong style="font-size: var(--font-size-sm);">' + rc.title + '</strong>' +
-              '<p style="font-size: var(--font-size-xs); color: var(--color-text-secondary); margin-top: var(--space-xs);">' + rc.description + '</p>';
+            html += '<div class="root-cause root-cause--' + step.delayRisk + '">' +
+              '<div class="root-cause__title">' +
+                '<span class="root-cause__severity root-cause__severity--' + step.delayRisk + '" aria-label="' + step.delayRisk + ' severity"></span>' +
+                rc.title +
+              '</div>' +
+              '<p class="root-cause__description">' + rc.description + '</p>';
 
             if (rc.diagnosticCommands && rc.diagnosticCommands.length > 0) {
-              html += '<pre style="background: var(--color-bg); padding: var(--space-sm); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: var(--font-mono); overflow-x: auto; margin-top: var(--space-xs);">';
+              html += '<div class="root-cause__commands-label">Diagnostic Commands:</div>' +
+                '<pre class="root-cause__commands">';
               for (var k = 0; k < rc.diagnosticCommands.length; k++) {
-                html += rc.diagnosticCommands[k] + '\n';
+                html += rc.diagnosticCommands[k];
+                if (k < rc.diagnosticCommands.length - 1) html += '\n';
               }
               html += '</pre>';
             }
@@ -1527,9 +1663,9 @@
 
           // Diagnostic tips
           if (step.diagnosticTips && step.diagnosticTips.length > 0) {
-            html += '<div style="margin-top: var(--space-sm); padding-top: var(--space-sm); border-top: 1px solid var(--color-border);">' +
-              '<strong style="font-size: var(--font-size-xs); color: var(--color-text-muted);">Tips:</strong>' +
-              '<ul style="font-size: var(--font-size-xs); color: var(--color-text-secondary); margin-top: var(--space-xs); padding-left: var(--space-lg);">';
+            html += '<div class="diagnostic-tips">' +
+              '<span class="diagnostic-tips__label">Tips:</span>' +
+              '<ul class="diagnostic-tips__list">';
             for (var t = 0; t < step.diagnosticTips.length; t++) {
               html += '<li>' + step.diagnosticTips[t] + '</li>';
             }
