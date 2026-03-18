@@ -1,4 +1,5 @@
-#Requires -RunAsAdministrator
+# Run as administrator for full data collection.
+# When run as a standard user, AD-dependent and privileged sections are skipped gracefully.
 <#
 .SYNOPSIS
     AD Login Speed Diagnostic Script
@@ -30,6 +31,10 @@ param(
 $ReportLines = [System.Collections.Generic.List[string]]::new()
 $DiagnosticSummary = [System.Collections.Generic.List[string]]::new()
 $Warnings = [System.Collections.Generic.List[string]]::new()
+
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator
+)
 
 function Write-Section {
     param([string]$Title)
@@ -94,13 +99,14 @@ $bios = Get-CimInstance Win32_BIOS
 
 Write-Item "Hostname"         $env:COMPUTERNAME
 Write-Item "Domain"           $cs.Domain
-Write-Item "Workgroup/Domain" $(if ($cs.PartOfDomain) { "Domain joined" } else { "NOT domain joined – stopping here" }) `
-           $(if ($cs.PartOfDomain) { "OK" } else { "FAIL" })
+$IsDomainJoined = $cs.PartOfDomain
+Write-Item "Workgroup/Domain" $(if ($IsDomainJoined) { "Domain joined" } else { "NOT domain joined – AD sections will show N/A" }) `
+           $(if ($IsDomainJoined) { "OK" } else { "WARN" })
+Write-Item "Running as Admin"  $(if ($IsAdmin) { "Yes – full data collection" } else { "No – some sections require elevation" }) `
+           $(if ($IsAdmin) { "OK" } else { "WARN" })
 
-if (-not $cs.PartOfDomain) {
-    $ReportLines | Out-File $OutputPath -Encoding UTF8
-    Write-Host "`nThis machine is not domain-joined. Exiting." -ForegroundColor Red
-    exit 1
+if (-not $IsDomainJoined) {
+    $DiagnosticSummary.Add("Machine is not domain-joined. Sections 3-6 (AD/DC/GPO/Logon Events) are not applicable.")
 }
 
 Write-Item "OS"               "$($os.Caption) ($($os.Version))"
@@ -169,46 +175,50 @@ if ($uptimeHrs -lt 0.1) {
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "3. DNS & DOMAIN CONTROLLER DISCOVERY"
 
-$domain = $cs.Domain
-
-# DNS resolution of the domain
-$dnsResult = Measure-MSec {
-    try { [System.Net.Dns]::GetHostAddresses($domain) } catch { $null }
-}
-$dnsStatus = Get-StatusByMs -Ms $dnsResult.Ms -OkMax 200 -WarnMax 800
-Write-Item "DNS resolve domain (ms)"  $dnsResult.Ms $dnsStatus
-if (-not $dnsResult.Result) {
-    Write-Item "DNS resolve result"  "FAILED – cannot resolve $domain" "FAIL"
-    $DiagnosticSummary.Add("DNS resolution of the domain '$domain' failed. Check DNS server config.")
+if (-not $IsDomainJoined) {
+    Write-Item "DNS & DC Discovery"  "N/A – machine is not domain-joined" "INFO"
 } else {
-    Write-Item "Domain resolves to"  ($dnsResult.Result | Select-Object -First 3 -ExpandProperty IPAddressToString) -join ", "
-}
+    $domain = $cs.Domain
 
-# nltest DC discovery
-$nltestResult = Measure-MSec {
-    $out = & nltest.exe /dsgetdc:$domain 2>&1
-    [pscustomobject]@{ Output = $out; Success = ($LASTEXITCODE -eq 0) }
-}
-$dcDiscStatus = if (-not $nltestResult.Result.Success) { "FAIL" }
-               elseif ($nltestResult.Ms -gt 3000)       { "FAIL" }
-               elseif ($nltestResult.Ms -gt 1000)       { "WARN" }
-               else                                      { "OK"   }
-Write-Item "DC discovery via nltest (ms)"  $nltestResult.Ms $dcDiscStatus
+    # DNS resolution of the domain
+    $dnsResult = Measure-MSec {
+        try { [System.Net.Dns]::GetHostAddresses($domain) } catch { $null }
+    }
+    $dnsStatus = Get-StatusByMs -Ms $dnsResult.Ms -OkMax 200 -WarnMax 800
+    Write-Item "DNS resolve domain (ms)"  $dnsResult.Ms $dnsStatus
+    if (-not $dnsResult.Result) {
+        Write-Item "DNS resolve result"  "FAILED – cannot resolve $domain" "FAIL"
+        $DiagnosticSummary.Add("DNS resolution of the domain '$domain' failed. Check DNS server config.")
+    } else {
+        Write-Item "Domain resolves to"  ($dnsResult.Result | Select-Object -First 3 -ExpandProperty IPAddressToString) -join ", "
+    }
 
-if ($nltestResult.Result.Success) {
-    $dcLine = $nltestResult.Result.Output | Where-Object { $_ -match "DC: \\\\" }
-    if ($dcLine) {
-        $dcName = ($dcLine -replace ".*DC: \\\\", "").Trim()
-        Write-Item "Located Domain Controller"  $dcName
-        $script:DC = $dcName
+    # nltest DC discovery
+    $nltestResult = Measure-MSec {
+        $out = & nltest.exe /dsgetdc:$domain 2>&1
+        [pscustomobject]@{ Output = $out; Success = ($LASTEXITCODE -eq 0) }
     }
-    $siteLine = $nltestResult.Result.Output | Where-Object { $_ -match "Client Site Name" }
-    if ($siteLine) {
-        Write-Item "AD Site"  ($siteLine -replace ".*Client Site Name:\s*", "").Trim()
+    $dcDiscStatus = if (-not $nltestResult.Result.Success) { "FAIL" }
+                   elseif ($nltestResult.Ms -gt 3000)       { "FAIL" }
+                   elseif ($nltestResult.Ms -gt 1000)       { "WARN" }
+                   else                                      { "OK"   }
+    Write-Item "DC discovery via nltest (ms)"  $nltestResult.Ms $dcDiscStatus
+
+    if ($nltestResult.Result.Success) {
+        $dcLine = $nltestResult.Result.Output | Where-Object { $_ -match "DC: \\\\" }
+        if ($dcLine) {
+            $dcName = ($dcLine -replace ".*DC: \\\\", "").Trim()
+            Write-Item "Located Domain Controller"  $dcName
+            $script:DC = $dcName
+        }
+        $siteLine = $nltestResult.Result.Output | Where-Object { $_ -match "Client Site Name" }
+        if ($siteLine) {
+            Write-Item "AD Site"  ($siteLine -replace ".*Client Site Name:\s*", "").Trim()
+        }
+    } else {
+        Write-Item "DC discovery"  "FAILED – nltest returned errors" "FAIL"
+        $DiagnosticSummary.Add("Domain controller discovery failed. Network or DNS issue likely.")
     }
-} else {
-    Write-Item "DC discovery"  "FAILED – nltest returned errors" "FAIL"
-    $DiagnosticSummary.Add("Domain controller discovery failed. Network or DNS issue likely.")
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -216,69 +226,73 @@ if ($nltestResult.Result.Success) {
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "4. NETWORK CONNECTIVITY TO DOMAIN CONTROLLER"
 
-if (-not $script:DC) {
-    # Fallback: resolve DC from DNS SRV record
-    try {
-        $srvRecords = Resolve-DnsName -Name "_ldap._tcp.dc._msdcs.$domain" -Type SRV -ErrorAction Stop
-        $script:DC = ($srvRecords | Where-Object { $_.Type -eq "SRV" } | Select-Object -First 1).NameTarget.TrimEnd(".")
-        Write-Item "Fallback DC (via SRV)"  $script:DC
-    } catch {
-        Write-Item "DC address"  "Could not determine DC address – skipping network tests" "WARN"
-    }
-}
-
-if ($script:DC) {
-    # Ping latency
-    $ping = Test-Connection -ComputerName $script:DC -Count 4 -ErrorAction SilentlyContinue
-    if ($ping) {
-        $avgMs = [math]::Round(($ping | Measure-Object ResponseTime -Average).Average, 1)
-        $pingStatus = if ($avgMs -gt 100) { "FAIL" } elseif ($avgMs -gt 40) { "WARN" } else { "OK" }
-        Write-Item "Ping DC avg latency (ms)"  $avgMs $pingStatus
-        if ($avgMs -gt 40) {
-            $DiagnosticSummary.Add("High latency to DC ($avgMs ms). Consider whether DC is remote or network is congested.")
-        }
-    } else {
-        Write-Item "Ping DC"  "No response (ICMP may be blocked)" "WARN"
-    }
-
-    # Key AD port tests
-    $ports = @(
-        @{ Port = 53;   Name = "DNS" }
-        @{ Port = 88;   Name = "Kerberos" }
-        @{ Port = 135;  Name = "RPC Endpoint Mapper" }
-        @{ Port = 389;  Name = "LDAP" }
-        @{ Port = 445;  Name = "SMB (SYSVOL/NETLOGON)" }
-        @{ Port = 636;  Name = "LDAPS" }
-        @{ Port = 3268; Name = "Global Catalog" }
-    )
-
-    foreach ($p in $ports) {
-        $connResult = Measure-MSec {
-            $tcp = New-Object System.Net.Sockets.TcpClient
-            try {
-                $tcp.Connect($script:DC, $p.Port)
-                $tcp.Connected
-            } catch { $false }
-            finally { $tcp.Dispose() }
-        }
-        $open = $connResult.Result
-        $portStatus = if ($open) { if ($connResult.Ms -gt 1000) { "WARN" } else { "OK" } } else { "FAIL" }
-        Write-Item "Port $($p.Port) $($p.Name)"  $(if ($open) { "OPEN ($($connResult.Ms) ms)" } else { "CLOSED / FILTERED" }) $portStatus
-        if (-not $open -and $p.Port -in @(88, 389, 445)) {
-            $DiagnosticSummary.Add("Critical AD port $($p.Port) ($($p.Name)) is not reachable on DC $($script:DC).")
+if (-not $IsDomainJoined) {
+    Write-Item "DC Network Connectivity"  "N/A – machine is not domain-joined" "INFO"
+} else {
+    if (-not $script:DC) {
+        # Fallback: resolve DC from DNS SRV record
+        try {
+            $srvRecords = Resolve-DnsName -Name "_ldap._tcp.dc._msdcs.$domain" -Type SRV -ErrorAction Stop
+            $script:DC = ($srvRecords | Where-Object { $_.Type -eq "SRV" } | Select-Object -First 1).NameTarget.TrimEnd(".")
+            Write-Item "Fallback DC (via SRV)"  $script:DC
+        } catch {
+            Write-Item "DC address"  "Could not determine DC address – skipping network tests" "WARN"
         }
     }
 
-    # SMB / SYSVOL share availability
-    $sysvolResult = Measure-MSec {
-        Test-Path "\\$($script:DC)\SYSVOL" -ErrorAction SilentlyContinue
-    }
-    $sysvolStatus = if ($sysvolResult.Result) {
-                        if ($sysvolResult.Ms -gt 3000) { "WARN" } else { "OK" }
-                    } else { "FAIL" }
-    Write-Item "SYSVOL share reachable"  $(if ($sysvolResult.Result) { "Yes ($($sysvolResult.Ms) ms)" } else { "No" }) $sysvolStatus
-    if (-not $sysvolResult.Result) {
-        $DiagnosticSummary.Add("SYSVOL is not reachable. GPOs and logon scripts cannot be applied from $($script:DC).")
+    if ($script:DC) {
+        # Ping latency
+        $ping = Test-Connection -ComputerName $script:DC -Count 4 -ErrorAction SilentlyContinue
+        if ($ping) {
+            $avgMs = [math]::Round(($ping | Measure-Object ResponseTime -Average).Average, 1)
+            $pingStatus = if ($avgMs -gt 100) { "FAIL" } elseif ($avgMs -gt 40) { "WARN" } else { "OK" }
+            Write-Item "Ping DC avg latency (ms)"  $avgMs $pingStatus
+            if ($avgMs -gt 40) {
+                $DiagnosticSummary.Add("High latency to DC ($avgMs ms). Consider whether DC is remote or network is congested.")
+            }
+        } else {
+            Write-Item "Ping DC"  "No response (ICMP may be blocked)" "WARN"
+        }
+
+        # Key AD port tests
+        $ports = @(
+            @{ Port = 53;   Name = "DNS" }
+            @{ Port = 88;   Name = "Kerberos" }
+            @{ Port = 135;  Name = "RPC Endpoint Mapper" }
+            @{ Port = 389;  Name = "LDAP" }
+            @{ Port = 445;  Name = "SMB (SYSVOL/NETLOGON)" }
+            @{ Port = 636;  Name = "LDAPS" }
+            @{ Port = 3268; Name = "Global Catalog" }
+        )
+
+        foreach ($p in $ports) {
+            $connResult = Measure-MSec {
+                $tcp = New-Object System.Net.Sockets.TcpClient
+                try {
+                    $tcp.Connect($script:DC, $p.Port)
+                    $tcp.Connected
+                } catch { $false }
+                finally { $tcp.Dispose() }
+            }
+            $open = $connResult.Result
+            $portStatus = if ($open) { if ($connResult.Ms -gt 1000) { "WARN" } else { "OK" } } else { "FAIL" }
+            Write-Item "Port $($p.Port) $($p.Name)"  $(if ($open) { "OPEN ($($connResult.Ms) ms)" } else { "CLOSED / FILTERED" }) $portStatus
+            if (-not $open -and $p.Port -in @(88, 389, 445)) {
+                $DiagnosticSummary.Add("Critical AD port $($p.Port) ($($p.Name)) is not reachable on DC $($script:DC).")
+            }
+        }
+
+        # SMB / SYSVOL share availability
+        $sysvolResult = Measure-MSec {
+            Test-Path "\\$($script:DC)\SYSVOL" -ErrorAction SilentlyContinue
+        }
+        $sysvolStatus = if ($sysvolResult.Result) {
+                            if ($sysvolResult.Ms -gt 3000) { "WARN" } else { "OK" }
+                        } else { "FAIL" }
+        Write-Item "SYSVOL share reachable"  $(if ($sysvolResult.Result) { "Yes ($($sysvolResult.Ms) ms)" } else { "No" }) $sysvolStatus
+        if (-not $sysvolResult.Result) {
+            $DiagnosticSummary.Add("SYSVOL is not reachable. GPOs and logon scripts cannot be applied from $($script:DC).")
+        }
     }
 }
 
@@ -302,6 +316,12 @@ if ($skewLine) {
 # SECTION 5 – GROUP POLICY PROCESSING TIMES (EVENT LOG)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "5. GROUP POLICY PROCESSING TIMES (Last 5 logons)"
+
+if (-not $IsDomainJoined) {
+    Write-Item "Group Policy"  "N/A – machine is not domain-joined" "INFO"
+} elseif (-not $IsAdmin) {
+    Write-Item "Group Policy Event Log"  "Requires administrator rights to read – run as admin for GP timing data" "WARN"
+}
 
 try {
     $gpLog = Get-WinEvent -LogName "Microsoft-Windows-GroupPolicy/Operational" `
@@ -358,16 +378,20 @@ try {
 
 # gpresult for applied GPOs count
 Write-Raw ""
-try {
-    $gpresult = & gpresult.exe /R /SCOPE USER 2>&1
-    $appliedLine = $gpresult | Where-Object { $_ -match "Applied Group Policy Objects" }
-    $countLine   = $gpresult | Where-Object { $_ -match "The following GPOs were not applied" }
-    $gpoLines    = $gpresult | Select-String "^\s{8}\S" | Select-Object -First 30
-    Write-Item "Applied GPOs count"  $gpoLines.Count
-    Write-Raw  "  Applied GPOs:"
-    $gpoLines | ForEach-Object { Write-Raw "    - $($_.Line.Trim())" }
-} catch {
-    Write-Item "GPResult"  "Could not run gpresult: $_" "WARN"
+if (-not $IsDomainJoined) {
+    Write-Item "Applied GPOs"  "N/A – machine is not domain-joined" "INFO"
+} else {
+    try {
+        $gpresult = & gpresult.exe /R /SCOPE USER 2>&1
+        $appliedLine = $gpresult | Where-Object { $_ -match "Applied Group Policy Objects" }
+        $countLine   = $gpresult | Where-Object { $_ -match "The following GPOs were not applied" }
+        $gpoLines    = $gpresult | Select-String "^\s{8}\S" | Select-Object -First 30
+        Write-Item "Applied GPOs count"  $gpoLines.Count
+        Write-Raw  "  Applied GPOs:"
+        $gpoLines | ForEach-Object { Write-Raw "    - $($_.Line.Trim())" }
+    } catch {
+        Write-Item "GPResult"  "Could not run gpresult: $_" "WARN"
+    }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -375,31 +399,35 @@ try {
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "6. RECENT INTERACTIVE LOGON EVENTS"
 
-try {
-    # Event 4624 Type 2 = Interactive logon, Type 10 = RemoteInteractive
-    $logonEvents = Get-WinEvent -FilterHashtable @{
-        LogName   = "Security"
-        Id        = 4624
-        StartTime = (Get-Date).AddDays(-7)
-    } -MaxEvents 500 -ErrorAction Stop |
-        Where-Object { $_.Message -match "Logon Type:\s+(2|10)\b" } |
-        Sort-Object TimeCreated -Descending |
-        Select-Object -First 10
+if (-not $IsAdmin) {
+    Write-Item "Security Event Log"  "Requires administrator rights – run as admin to see logon events" "WARN"
+} else {
+    try {
+        # Event 4624 Type 2 = Interactive logon, Type 10 = RemoteInteractive
+        $logonEvents = Get-WinEvent -FilterHashtable @{
+            LogName   = "Security"
+            Id        = 4624
+            StartTime = (Get-Date).AddDays(-7)
+        } -MaxEvents 500 -ErrorAction Stop |
+            Where-Object { $_.Message -match "Logon Type:\s+(2|10)\b" } |
+            Sort-Object TimeCreated -Descending |
+            Select-Object -First 10
 
-    if ($logonEvents.Count -gt 0) {
-        Write-Raw "  Last $($logonEvents.Count) interactive logon events:"
-        $logonEvents | ForEach-Object {
-            $userLine = $_.Message -split "`n" | Where-Object { $_ -match "Account Name:\s+\S" } | Select-Object -First 1
-            $user     = if ($userLine -match "Account Name:\s+(.+)") { $Matches[1].Trim() } else { "Unknown" }
-            $typeMatch = $_.Message -match "Logon Type:\s+(\d+)"
-            $ltype    = if ($typeMatch) { if ($Matches[1] -eq "10") { "Remote" } else { "Local" } } else { "" }
-            Write-Raw ("    {0}  User: {1,-30} {2}" -f $_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss"), $user, $ltype)
+        if ($logonEvents.Count -gt 0) {
+            Write-Raw "  Last $($logonEvents.Count) interactive logon events:"
+            $logonEvents | ForEach-Object {
+                $userLine = $_.Message -split "`n" | Where-Object { $_ -match "Account Name:\s+\S" } | Select-Object -First 1
+                $user     = if ($userLine -match "Account Name:\s+(.+)") { $Matches[1].Trim() } else { "Unknown" }
+                $typeMatch = $_.Message -match "Logon Type:\s+(\d+)"
+                $ltype    = if ($typeMatch) { if ($Matches[1] -eq "10") { "Remote" } else { "Local" } } else { "" }
+                Write-Raw ("    {0}  User: {1,-30} {2}" -f $_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss"), $user, $ltype)
+            }
+        } else {
+            Write-Item "Logon Events"  "No interactive logons found in last 7 days" "WARN"
         }
-    } else {
-        Write-Item "Logon Events"  "No interactive logons found in last 7 days" "WARN"
+    } catch {
+        Write-Item "Security Log"  "Could not read Security event log: $_" "WARN"
     }
-} catch {
-    Write-Item "Security Log"  "Could not read Security event log: $_" "WARN"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -407,8 +435,14 @@ try {
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "7. USER PROFILE"
 
-$profiles = Get-CimInstance Win32_UserProfile | Where-Object { -not $_.Special } |
+# Without admin, Win32_UserProfile only returns the current user's profile
+$profiles = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
+            Where-Object { -not $_.Special } |
             Sort-Object LastUseTime -Descending
+
+if (-not $IsAdmin) {
+    Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
+}
 
 Write-Raw "  Loaded profiles:"
 $profiles | Select-Object -First 10 | ForEach-Object {
@@ -474,6 +508,10 @@ foreach ($key in $runKeys) {
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "9. WINDOWS LOGON PERFORMANCE EVENTS"
 
+if (-not $IsAdmin) {
+    Write-Item "Winlogon Event Log"  "Requires administrator rights – run as admin for Winlogon timing data" "WARN"
+}
+
 try {
     $winlogonEvents = Get-WinEvent -LogName "Microsoft-Windows-Winlogon/Operational" `
                                    -MaxEvents 200 -ErrorAction Stop |
@@ -513,6 +551,10 @@ if ($notifPackages) {
 # SECTION 10 – NETLOGON LOG ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "10. NETLOGON LOG ANALYSIS"
+
+if (-not $IsDomainJoined) {
+    Write-Item "NETLOGON Log"  "N/A – machine is not domain-joined" "INFO"
+}
 
 $netlogonPath = "$env:SystemRoot\debug\netlogon.log"
 if (Test-Path $netlogonPath) {
