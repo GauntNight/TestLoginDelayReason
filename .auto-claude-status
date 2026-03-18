@@ -1,0 +1,25 @@
+{
+  "active": true,
+  "spec": "001-create-login-flow-ui-diagnosis",
+  "state": "complete",
+  "subtasks": {
+    "completed": 6,
+    "total": 6,
+    "in_progress": 0,
+    "failed": 0
+  },
+  "phase": {
+    "current": "Interactive Features & Polish",
+    "id": null,
+    "total": 2
+  },
+  "workers": {
+    "active": 0,
+    "max": 1
+  },
+  "session": {
+    "number": 6,
+    "started_at": "2026-03-18T16:59:06.040378"
+  },
+  "last_update": "2026-03-18T17:17:55.122637"
+}
