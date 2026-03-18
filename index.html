@@ -1337,18 +1337,246 @@
     /* ========================================
        State
        ======================================== */
+    let selectedType = 'local';
+
+    /* ========================================
+       Helper Functions
+       ======================================== */
+
+    /**
+     * Convert a duration object to a normalized millisecond value.
+     * Handles mixed units (e.g., { min: 500, max: 3, unit: 'seconds' } where min is in ms).
+     */
+    function durationToMs(value, unit) {
+      if (unit === 'ms') return value;
+      if (unit === 'seconds' || unit === 'second' || unit === 's') return value * 1000;
+      return value;
+    }
+
+    /**
+     * Format a duration value with its unit for display.
+     */
+    function formatDuration(min, max, unit) {
+      var displayUnit = unit === 'ms' ? 'ms' : 's';
+      // Normalize: if unit is seconds but min looks like ms (>= 100), display as mixed
+      if (unit === 'seconds' && min >= 100) {
+        return min + 'ms – ' + max + 's';
+      }
+      return min + ' – ' + max + ' ' + displayUnit;
+    }
+
+    /**
+     * Get the CSS badge class for a given risk level.
+     */
+    function riskBadgeClass(risk) {
+      var map = {
+        none: 'badge--none',
+        low: 'badge--low',
+        medium: 'badge--medium',
+        high: 'badge--high',
+        critical: 'badge--critical'
+      };
+      return map[risk] || 'badge--none';
+    }
+
+    /**
+     * Calculate summary statistics for a set of steps.
+     */
+    function calcSummary(steps) {
+      var totalNormalMs = 0;
+      var totalWorstMs = 0;
+      var highCriticalCount = 0;
+
+      for (var i = 0; i < steps.length; i++) {
+        var step = steps[i];
+        var d = step.normalDuration;
+        totalNormalMs += durationToMs(d.max, d.unit);
+
+        var dd = step.delayedDuration;
+        totalWorstMs += durationToMs(dd.max, dd.unit);
+
+        if (step.delayRisk === 'high' || step.delayRisk === 'critical') {
+          highCriticalCount++;
+        }
+      }
+
+      return {
+        totalNormalMs: totalNormalMs,
+        totalWorstMs: totalWorstMs,
+        highCriticalCount: highCriticalCount,
+        stepCount: steps.length
+      };
+    }
+
+    /**
+     * Format milliseconds to a human-readable string.
+     */
+    function formatMs(ms) {
+      if (ms < 1000) return ms + ' ms';
+      var secs = ms / 1000;
+      if (secs < 60) return secs.toFixed(1) + ' s';
+      var mins = Math.floor(secs / 60);
+      var remainSecs = Math.round(secs % 60);
+      return mins + 'm ' + remainSecs + 's';
+    }
 
     /* ========================================
        Rendering Functions
        ======================================== */
 
+    /**
+     * Render the tab navigation.
+     */
+    function renderTabs() {
+      var nav = document.querySelector('.nav');
+      nav.innerHTML = '';
+
+      var types = [
+        { key: 'local', label: 'Local Login' },
+        { key: 'domain', label: 'Domain-Joined Login' }
+      ];
+
+      for (var i = 0; i < types.length; i++) {
+        var btn = document.createElement('button');
+        btn.className = 'nav__tab' + (types[i].key === selectedType ? ' nav__tab--active' : '');
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('aria-selected', types[i].key === selectedType ? 'true' : 'false');
+        btn.setAttribute('data-type', types[i].key);
+        btn.textContent = types[i].label;
+        nav.appendChild(btn);
+      }
+    }
+
+    /**
+     * Render the summary dashboard.
+     */
+    function renderSummary(stats) {
+      var container = document.getElementById('summary');
+      container.innerHTML = '';
+
+      var cards = [
+        { label: 'Steps', value: stats.stepCount },
+        { label: 'Normal Time (max)', value: formatMs(stats.totalNormalMs) },
+        { label: 'Worst-Case Time', value: formatMs(stats.totalWorstMs) },
+        { label: 'High/Critical Risk', value: stats.highCriticalCount }
+      ];
+
+      for (var i = 0; i < cards.length; i++) {
+        var card = document.createElement('div');
+        card.className = 'summary__card';
+        card.innerHTML =
+          '<div class="summary__label">' + cards[i].label + '</div>' +
+          '<div class="summary__value">' + cards[i].value + '</div>';
+        container.appendChild(card);
+      }
+    }
+
+    /**
+     * Render the timeline with all step cards.
+     */
+    function renderTimeline() {
+      var container = document.getElementById('timeline');
+      container.innerHTML = '';
+
+      var steps = LOGIN_STEPS[selectedType];
+      if (!steps) return;
+
+      for (var i = 0; i < steps.length; i++) {
+        var step = steps[i];
+        var isFlagged = step.delayRisk === 'high' || step.delayRisk === 'critical';
+
+        var card = document.createElement('article');
+        card.className = 'timeline__step' + (isFlagged ? ' timeline__step--flagged' : '');
+        card.setAttribute('data-step-id', step.id);
+        card.setAttribute('data-step-index', i);
+
+        var html =
+          '<div class="step__header">' +
+            '<div>' +
+              '<span class="step__number">Step ' + (i + 1) + '</span> ' +
+              '<span class="step__name">' + step.name + '</span>' +
+            '</div>' +
+            '<span class="badge ' + riskBadgeClass(step.delayRisk) + '">' + step.delayRisk + '</span>' +
+          '</div>' +
+          '<p class="step__description">' + step.description + '</p>' +
+          '<div class="step__meta">' +
+            '<span class="step__duration">Normal: ' + formatDuration(step.normalDuration.min, step.normalDuration.max, step.normalDuration.unit) + '</span>' +
+          '</div>';
+
+        // Add expandable root cause details if there are root causes
+        if (step.rootCauses && step.rootCauses.length > 0) {
+          html += '<details class="step__details">' +
+            '<summary>Root Causes &amp; Diagnostics (' + step.rootCauses.length + ')</summary>' +
+            '<div class="step__details-content">';
+
+          for (var j = 0; j < step.rootCauses.length; j++) {
+            var rc = step.rootCauses[j];
+            html += '<div style="margin-top: var(--space-sm);">' +
+              '<strong style="font-size: var(--font-size-sm);">' + rc.title + '</strong>' +
+              '<p style="font-size: var(--font-size-xs); color: var(--color-text-secondary); margin-top: var(--space-xs);">' + rc.description + '</p>';
+
+            if (rc.diagnosticCommands && rc.diagnosticCommands.length > 0) {
+              html += '<pre style="background: var(--color-bg); padding: var(--space-sm); border-radius: var(--radius-sm); font-size: var(--font-size-xs); font-family: var(--font-mono); overflow-x: auto; margin-top: var(--space-xs);">';
+              for (var k = 0; k < rc.diagnosticCommands.length; k++) {
+                html += rc.diagnosticCommands[k] + '\n';
+              }
+              html += '</pre>';
+            }
+            html += '</div>';
+          }
+
+          // Diagnostic tips
+          if (step.diagnosticTips && step.diagnosticTips.length > 0) {
+            html += '<div style="margin-top: var(--space-sm); padding-top: var(--space-sm); border-top: 1px solid var(--color-border);">' +
+              '<strong style="font-size: var(--font-size-xs); color: var(--color-text-muted);">Tips:</strong>' +
+              '<ul style="font-size: var(--font-size-xs); color: var(--color-text-secondary); margin-top: var(--space-xs); padding-left: var(--space-lg);">';
+            for (var t = 0; t < step.diagnosticTips.length; t++) {
+              html += '<li>' + step.diagnosticTips[t] + '</li>';
+            }
+            html += '</ul></div>';
+          }
+
+          html += '</div></details>';
+        }
+
+        card.innerHTML = html;
+        container.appendChild(card);
+      }
+    }
+
+    /**
+     * Main render function — orchestrates all rendering.
+     */
+    function render() {
+      var steps = LOGIN_STEPS[selectedType];
+      var stats = calcSummary(steps);
+
+      renderTabs();
+      renderSummary(stats);
+      renderTimeline();
+    }
+
     /* ========================================
        Event Handlers
        ======================================== */
 
+    // Event delegation on nav for tab switching
+    document.querySelector('.nav').addEventListener('click', function(e) {
+      var tab = e.target.closest('.nav__tab');
+      if (!tab) return;
+
+      var type = tab.getAttribute('data-type');
+      if (type && type !== selectedType) {
+        selectedType = type;
+        render();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
     /* ========================================
        Initialization
        ======================================== */
+    render();
   </script>
 </body>
 </html>
