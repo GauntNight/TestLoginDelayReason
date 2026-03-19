@@ -31,6 +31,7 @@ param(
 $ReportLines = [System.Collections.Generic.List[string]]::new()
 $DiagnosticSummary = [System.Collections.Generic.List[string]]::new()
 $Warnings = [System.Collections.Generic.List[string]]::new()
+$ErrorLog = [System.Collections.Generic.List[PSCustomObject]]::new()
 
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
@@ -59,6 +60,24 @@ function Write-Raw {
     param([string]$Text)
     $ReportLines.Add($Text)
     Write-Host $Text
+}
+
+function Write-ErrorLog {
+    param(
+        [ValidateSet("MissingCommand","MissingModule","SecurityFailure","OperationError")]
+        [string]$Category,
+        [string]$Source,
+        [string]$Message
+    )
+    $entry = [pscustomobject]@{
+        Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Category  = $Category
+        Source    = $Source
+        Message   = $Message
+    }
+    $ErrorLog.Add($entry)
+    $status = if ($Category -eq "SecurityFailure") { "FAIL" } else { "WARN" }
+    Write-Item -Label "$Source [$Category]" -Value $Message -Status $status
 }
 
 function Measure-MSec {
