@@ -975,6 +975,77 @@ Write-Raw @"
 
 $SectionStatus["11. Summary & Recommendations"] = "Completed"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 12 – ERROR LOG
+# ═══════════════════════════════════════════════════════════════════════════
+Write-Section "12. ERROR LOG"
+$SectionStatus["12. Error Log"] = "In Progress"
+
+# ─── Section Status Summary Table ───────────────────────────────────────────
+Write-Raw ""
+Write-Raw "  ┌─────────────────────────────────────────────────────────────┐"
+Write-Raw "  │                    SECTION STATUS SUMMARY                   │"
+Write-Raw "  ├──────────────────────────────────────────┬──────────────────┤"
+Write-Raw "  │ Section                                  │ Status           │"
+Write-Raw "  ├──────────────────────────────────────────┼──────────────────┤"
+foreach ($key in $SectionStatus.Keys) {
+    if ($key -eq "12. Error Log") { continue }
+    $statusVal = $SectionStatus[$key]
+    $sectionCol = Format-FixedWidth $key 40
+    $statusCol  = Format-FixedWidth $statusVal 16
+    Write-Raw "  │ $sectionCol │ $statusCol │"
+}
+Write-Raw "  └──────────────────────────────────────────┴──────────────────┘"
+Write-Raw ""
+
+# ─── Error Counts by Category ──────────────────────────────────────────────
+if ($ErrorLog.Count -gt 0) {
+    Write-Raw "  Error Counts by Category:"
+    Write-Raw "  ─────────────────────────────────────────"
+    $grouped = $ErrorLog | Group-Object -Property Category | Sort-Object Count -Descending
+    foreach ($g in $grouped) {
+        Write-Raw ("  {0,-30} {1}" -f $g.Name, $g.Count)
+    }
+    Write-Raw ""
+
+    # ─── Remediation Guidance ───────────────────────────────────────────────
+    $remediationCategories = @("MissingCommand", "MissingModule", "MissingType", "SecurityFailure", "EnvironmentIssue")
+    $remediationErrors = $ErrorLog | Where-Object { $_.Category -in $remediationCategories -and $_.Remediation }
+    if ($remediationErrors) {
+        Write-Raw "  ╔═══════════════════════════════════════════════════════════════╗"
+        Write-Raw "  ║              REMEDIATION GUIDANCE                             ║"
+        Write-Raw "  ╚═══════════════════════════════════════════════════════════════╝"
+        Write-Raw ""
+        $remGroups = $remediationErrors | Group-Object -Property Category
+        foreach ($rg in $remGroups) {
+            Write-Raw "  [$($rg.Name)]"
+            foreach ($entry in $rg.Group) {
+                Write-Raw "    • $($entry.Source): $($entry.Remediation)"
+            }
+            Write-Raw ""
+        }
+    }
+
+    # ─── Error Entries ──────────────────────────────────────────────────────
+    Write-Raw "  All Error Entries ($($ErrorLog.Count)):"
+    Write-Raw "  ─────────────────────────────────────────"
+    foreach ($entry in $ErrorLog) {
+        Write-Raw "  Timestamp   : $($entry.Timestamp)"
+        Write-Raw "  Category    : $($entry.Category)"
+        Write-Raw "  Source      : $($entry.Source)"
+        Write-Raw "  Message     : $($entry.Message)"
+        if ($entry.Remediation) {
+            Write-Raw "  Remediation : $($entry.Remediation)"
+        }
+        Write-Raw ""
+    }
+} else {
+    Write-Raw "  No errors were recorded during diagnostics."
+    Write-Raw ""
+}
+
+$SectionStatus["12. Error Log"] = "Completed"
+
 # ─── Save Report ────────────────────────────────────────────────────────────
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
