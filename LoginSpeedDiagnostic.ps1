@@ -589,9 +589,11 @@ try {
 # SECTION 5 – GROUP POLICY PROCESSING TIMES (EVENT LOG)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "5. GROUP POLICY PROCESSING TIMES (Last 5 logons)"
+$SectionStatus["5. Group Policy Processing"] = "In Progress"
 
 if (-not $IsDomainJoined) {
     Write-Item "Group Policy"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["5. Group Policy Processing"] = "Skipped"
 } elseif (-not $IsAdmin) {
     Write-Item "Group Policy Event Log"  "Requires administrator rights to read – run as admin for GP timing data" "WARN"
 }
@@ -657,6 +659,10 @@ try {
     Write-Item "GP Event Log"  "Could not read Group Policy operational log: $_" "WARN"
 }
 
+if ($SectionStatus["5. Group Policy Processing"] -ne "Skipped") {
+    $SectionStatus["5. Group Policy Processing"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 5*" }) { "Partial" } else { "Completed" }
+}
+
 # gpresult for applied GPOs count (using XML output for locale-independence)
 Write-Raw ""
 if (-not $IsDomainJoined) {
@@ -692,6 +698,7 @@ if (-not $IsDomainJoined) {
 # SECTION 6 – LOGON EVENT TIMING (Security Event Log)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "6. RECENT INTERACTIVE LOGON EVENTS"
+$SectionStatus["6. Logon Events"] = "In Progress"
 
 if (-not $IsAdmin) {
     Write-Item "Security Event Log"  "Requires administrator rights – run as admin to see logon events" "WARN"
@@ -732,42 +739,55 @@ if (-not $IsAdmin) {
     }
 }
 
+$SectionStatus["6. Logon Events"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 6*" }) { "Partial" } else { "Completed" }
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 7 – USER PROFILE
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "7. USER PROFILE"
+$SectionStatus["7. User Profile"] = "In Progress"
 
-# Without admin, Win32_UserProfile only returns the current user's profile
-$profiles = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
-            Where-Object { -not $_.Special } |
-            Sort-Object LastUseTime -Descending
+try {
+    # Without admin, Win32_UserProfile only returns the current user's profile
+    $profiles = Get-CimInstance Win32_UserProfile -ErrorAction Stop |
+                Where-Object { -not $_.Special } |
+                Sort-Object LastUseTime -Descending
 
-if (-not $IsAdmin) {
-    Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
-}
-
-Write-Raw "  Loaded profiles:"
-$profiles | Select-Object -First 10 | ForEach-Object {
-    $profilePath = $_.LocalPath
-    $sizeGB      = "?"
-    try {
-        $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
-                      Measure-Object Length -Sum).Sum
-        $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
-    } catch {}
-    $isRoaming = $_.RoamingConfigured
-    $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
-    Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
-
-    if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
-        $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+    if (-not $IsAdmin) {
+        Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
     }
+
+    Write-Raw "  Loaded profiles:"
+    $profiles | Select-Object -First 10 | ForEach-Object {
+        $profilePath = $_.LocalPath
+        $sizeGB      = "?"
+        try {
+            $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
+                          Measure-Object Length -Sum).Sum
+            $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
+        } catch {}
+        $isRoaming = $_.RoamingConfigured
+        $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
+        Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
+
+        if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
+            $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+        }
+    }
+} catch {
+    $category = if ($_.Exception.Message -match "Access.denied|not have permission") { "SecurityFailure" } else { "OperationError" }
+    Write-ErrorLog -Category $category -Source "Section 7 - User Profile" `
+        -Message "Failed to retrieve user profiles via CIM: $($_.Exception.Message)" `
+        -Remediation "Ensure the WMI/CIM service (winmgmt) is running and Win32_UserProfile class is accessible."
 }
+
+$SectionStatus["7. User Profile"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 7*" }) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 8 – LOGON SCRIPTS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "8. LOGON SCRIPTS & STARTUP ITEMS"
+$SectionStatus["8. Logon Scripts"] = "In Progress"
 
 # Check for logon scripts via Group Policy registry keys
 $gpoLogonScripts = @(
@@ -776,18 +796,25 @@ $gpoLogonScripts = @(
 )
 
 $foundScripts = $false
-foreach ($regPath in $gpoLogonScripts) {
-    if (Test-Path $regPath) {
-        $scripts = Get-ChildItem $regPath -ErrorAction SilentlyContinue
-        foreach ($s in $scripts) {
-            $scriptVal = Get-ItemProperty $s.PSPath -ErrorAction SilentlyContinue
-            Write-Item "GP Script"  "$($scriptVal.Script) $($scriptVal.Parameters)" "INFO"
-            $foundScripts = $true
+try {
+    foreach ($regPath in $gpoLogonScripts) {
+        if (Test-Path $regPath) {
+            $scripts = Get-ChildItem $regPath -ErrorAction Stop
+            foreach ($s in $scripts) {
+                $scriptVal = Get-ItemProperty $s.PSPath -ErrorAction SilentlyContinue
+                Write-Item "GP Script"  "$($scriptVal.Script) $($scriptVal.Parameters)" "INFO"
+                $foundScripts = $true
+            }
         }
     }
-}
-if (-not $foundScripts) {
-    Write-Item "GP Logon Scripts"  "None detected in registry" "OK"
+    if (-not $foundScripts) {
+        Write-Item "GP Logon Scripts"  "None detected in registry" "OK"
+    }
+} catch {
+    $category = if ($_.Exception.Message -match "Access.denied|not have permission") { "SecurityFailure" } else { "OperationError" }
+    Write-ErrorLog -Category $category -Source "Section 8 - GP Scripts Registry" `
+        -Message "Failed to enumerate GP logon scripts from registry: $($_.Exception.Message)" `
+        -Remediation "Ensure you have read access to the Group Policy registry keys under HKLM/HKCU."
 }
 
 # Startup programs (HKLM Run keys) – count only as proxy for load
@@ -805,10 +832,13 @@ foreach ($key in $runKeys) {
     } catch {}
 }
 
+$SectionStatus["8. Logon Scripts"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 8*" }) { "Partial" } else { "Completed" }
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 9 – WINDOWS LOGON PERFORMANCE (Winlogon event channel)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "9. WINDOWS LOGON PERFORMANCE EVENTS"
+$SectionStatus["9. Winlogon Performance"] = "In Progress"
 
 if (-not $IsAdmin) {
     Write-Item "Winlogon Event Log"  "Requires administrator rights – run as admin for Winlogon timing data" "WARN"
@@ -849,45 +879,61 @@ if ($notifPackages) {
     Write-Item "Winlogon Notify Packages"  $notifPackages "INFO"
 }
 
+$SectionStatus["9. Winlogon Performance"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 9*" }) { "Partial" } else { "Completed" }
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 10 – NETLOGON LOG ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "10. NETLOGON LOG ANALYSIS"
+$SectionStatus["10. Netlogon Analysis"] = "In Progress"
 
 if (-not $IsDomainJoined) {
     Write-Item "NETLOGON Log"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["10. Netlogon Analysis"] = "Skipped"
 }
 
-$netlogonPath = "$env:SystemRoot\debug\netlogon.log"
-if (Test-Path $netlogonPath) {
-    # Netlogon.log is written by the system in OEM codepage (e.g., CP932/Shift-JIS on Japanese Windows)
-    $systemEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
-    $netlogon = Get-Content $netlogonPath -Encoding $systemEncoding -ErrorAction SilentlyContinue | Select-Object -Last 300
-    $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
-    $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
+try {
+    $netlogonPath = "$env:SystemRoot\debug\netlogon.log"
+    if (Test-Path $netlogonPath) {
+        # Netlogon.log is written by the system in OEM codepage (e.g., CP932/Shift-JIS on Japanese Windows)
+        $systemEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+        $netlogon = Get-Content $netlogonPath -Encoding $systemEncoding -ErrorAction Stop | Select-Object -Last 300
+        $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
+        $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
 
-    Write-Item "Netlogon log"   "Found at $netlogonPath"
-    Write-Item "Last 300 lines" "Errors/warnings found: $($errors.Count)" `
-               $(if ($errors.Count -gt 5) { "WARN" } elseif ($errors.Count -gt 0) { "WARN" } else { "OK" })
+        Write-Item "Netlogon log"   "Found at $netlogonPath"
+        Write-Item "Last 300 lines" "Errors/warnings found: $($errors.Count)" `
+                   $(if ($errors.Count -gt 5) { "WARN" } elseif ($errors.Count -gt 0) { "WARN" } else { "OK" })
 
-    if ($errors.Count -gt 0) {
-        Write-Raw "  Recent NETLOGON errors:"
-        $errors | Select-Object -Last 10 | ForEach-Object { Write-Raw "    $_" }
-        $DiagnosticSummary.Add("NETLOGON.LOG contains $($errors.Count) errors – review $netlogonPath for authentication issues.")
+        if ($errors.Count -gt 0) {
+            Write-Raw "  Recent NETLOGON errors:"
+            $errors | Select-Object -Last 10 | ForEach-Object { Write-Raw "    $_" }
+            $DiagnosticSummary.Add("NETLOGON.LOG contains $($errors.Count) errors – review $netlogonPath for authentication issues.")
+        }
+        if ($dcDisc.Count -gt 0) {
+            Write-Raw "  DC discovery attempts (last 5):"
+            $dcDisc | Select-Object -Last 5 | ForEach-Object { Write-Raw "    $_" }
+        }
+    } else {
+        Write-Item "Netlogon log"  "Not found at $netlogonPath (may need debug logging enabled)" "INFO"
+        Write-Raw  "  To enable: nltest /dbflag:0x2080ffff"
     }
-    if ($dcDisc.Count -gt 0) {
-        Write-Raw "  DC discovery attempts (last 5):"
-        $dcDisc | Select-Object -Last 5 | ForEach-Object { Write-Raw "    $_" }
-    }
-} else {
-    Write-Item "Netlogon log"  "Not found at $netlogonPath (may need debug logging enabled)" "INFO"
-    Write-Raw  "  To enable: nltest /dbflag:0x2080ffff"
+} catch {
+    $category = if ($_.Exception.Message -match "Access.denied|not have permission|UnauthorizedAccess") { "SecurityFailure" } else { "OperationError" }
+    Write-ErrorLog -Category $category -Source "Section 10 - Netlogon Analysis" `
+        -Message "Failed to read netlogon log: $($_.Exception.Message)" `
+        -Remediation "Ensure you have read access to $env:SystemRoot\debug\netlogon.log. Run as administrator if needed."
+}
+
+if ($SectionStatus["10. Netlogon Analysis"] -ne "Skipped") {
+    $SectionStatus["10. Netlogon Analysis"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 10*" }) { "Partial" } else { "Completed" }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 11 – DIAGNOSTIC SUMMARY & RECOMMENDATIONS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "11. DIAGNOSTIC SUMMARY & RECOMMENDATIONS"
+$SectionStatus["11. Summary & Recommendations"] = "In Progress"
 
 if ($Warnings.Count -gt 0) {
     Write-Raw "  Warnings / Failures detected:"
@@ -926,6 +972,8 @@ Write-Raw @"
                    unavailable (Kerberos timeout ~30 sec).
   ──────────────────────────────────────────────────────────────────────
 "@
+
+$SectionStatus["11. Summary & Recommendations"] = "Completed"
 
 # ─── Save Report ────────────────────────────────────────────────────────────
 
