@@ -375,12 +375,16 @@ Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | ForEach-Object {
 
 # Time sync (W32TM) – clock skew breaks Kerberos (> 5 min = auth failure)
 Write-Raw ""
-$w32tmOut = & w32tm.exe /query /status 2>&1
-$stratumLine = $w32tmOut | Where-Object { $_ -match "Stratum" }
-$skewLine    = $w32tmOut | Where-Object { $_ -match "Phase Offset|RootDelay" } | Select-Object -First 1
-Write-Item "Time sync stratum"  ($stratumLine -replace ".*Stratum:\s*", "").Trim()
-if ($skewLine) {
-    Write-Item "Time offset/delay"  ($skewLine -replace ".*:\s*", "").Trim()
+# Use w32tm /query /source (outputs only the source, no labels)
+$timeSource = (& w32tm.exe /query /source 2>&1) | Select-Object -First 1
+Write-Item "Time sync source" $timeSource.ToString().Trim()
+
+# Use registry for NTP server config (locale-independent)
+try {
+    $ntpPeer = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" -ErrorAction Stop
+    Write-Item "NTP Server" $ntpPeer.NtpServer
+} catch {
+    Write-Item "Time config" "Could not query time configuration" "WARN"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
