@@ -191,6 +191,32 @@ $Header  = @"
 $ReportLines.Add($Header)
 Write-Host $Header -ForegroundColor White
 
+# ─── Pre-Flight Validation ──────────────────────────────────────────────────
+Write-Section "PRE-FLIGHT VALIDATION"
+
+# .NET Type availability checks
+$RequiredTypes = @(
+    @{ Name = "System.DirectoryServices.ActiveDirectory.DirectoryContext"; Purpose = "AD domain controller discovery" }
+    @{ Name = "System.Net.Dns";                                           Purpose = "DNS resolution" }
+    @{ Name = "System.Net.Sockets.TcpClient";                             Purpose = "TCP connectivity testing" }
+    @{ Name = "System.Diagnostics.Stopwatch";                              Purpose = "Performance timing" }
+)
+
+$TypeAvailability = @{}
+foreach ($t in $RequiredTypes) {
+    $available = Test-TypeAvailable -TypeName $t.Name
+    $TypeAvailability[$t.Name] = $available
+    if ($available) {
+        Write-Item -Label ".NET Type: $($t.Name.Split('.')[-1])" -Value "Available" -Status "OK"
+    } else {
+        Write-ErrorLog -Category "MissingType" -Source $t.Name `
+            -Message "Type '$($t.Name)' not available – $($t.Purpose) will be skipped" `
+            -Remediation "Ensure the required .NET assembly is loaded. For '$($t.Name)', verify that the .NET Framework or relevant assembly is installed."
+    }
+}
+
+Write-Item -Label "Pre-flight checks" -Value "Complete" -Status "INFO"
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1 – SYSTEM INFORMATION
 # ═══════════════════════════════════════════════════════════════════════════
