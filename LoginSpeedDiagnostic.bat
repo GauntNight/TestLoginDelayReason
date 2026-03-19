@@ -34,6 +34,7 @@ echo Starting AD Login Speed Diagnostic...
 echo Results will be saved to %SCRIPT_DIR%LoginSpeedReport.txt
 echo.
 
+chcp 65001 >nul 2>&1
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" -OutputPath "%SCRIPT_DIR%LoginSpeedReport.txt"
 
 echo.

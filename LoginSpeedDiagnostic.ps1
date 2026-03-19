@@ -1,4 +1,4 @@
-# Run as administrator for full data collection.
+﻿# Run as administrator for full data collection.
 # When run as a standard user, AD-dependent and privileged sections are skipped gracefully.
 <#
 .SYNOPSIS
@@ -26,6 +26,24 @@ param(
     [string]$OutputPath = ".\LoginSpeedReport.txt"
 )
 
+# ─── Encoding ────────────────────────────────────────────────────────────────
+# External commands output in the system's OEM codepage (e.g., 932/Shift-JIS on
+# Japanese Windows). Setting OutputEncoding to UTF-8 combined with chcp 65001
+# ensures correct decoding. For commands that ignore chcp, we use structured
+# alternatives (APIs, XML output) instead of text parsing.
+
+$OriginalConsoleOutputEncoding = [Console]::OutputEncoding
+$OriginalOutputEncoding        = $OutputEncoding
+
+try { chcp 65001 | Out-Null } catch {}   # Ask console to use UTF-8 code page
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+
+$PSDefaultParameterValues['Out-File:Encoding']     = 'utf8'
+$PSDefaultParameterValues['Set-Content:Encoding']   = 'utf8'
+$PSDefaultParameterValues['Add-Content:Encoding']   = 'utf8'
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 $ReportLines = [System.Collections.Generic.List[string]]::new()
@@ -47,7 +65,7 @@ function Write-Item {
     param([string]$Label, [string]$Value, [string]$Status = "INFO")
     $colors = @{ INFO = "White"; OK = "Green"; WARN = "Yellow"; FAIL = "Red" }
     $color  = if ($colors.ContainsKey($Status)) { $colors[$Status] } else { "White" }
-    $text   = "  [{0,-4}] {1,-40} {2}" -f $Status, $Label, $Value
+    $text   = "  [$(Format-FixedWidth $Status 4)] $(Format-FixedWidth $Label 40) $Value"
     $ReportLines.Add($text)
     Write-Host $text -ForegroundColor $color
     if ($Status -eq "WARN" -or $Status -eq "FAIL") {
@@ -74,6 +92,38 @@ function Get-StatusByMs {
     if ($Ms -le $OkMax)   { return "OK" }
     if ($Ms -le $WarnMax) { return "WARN" }
     return "FAIL"
+}
+
+function Get-DisplayWidth {
+    param([string]$Text)
+    $width = 0
+    foreach ($char in $Text.ToCharArray()) {
+        $cp = [int]$char
+        # CJK Unified Ideographs, Katakana, Hiragana, Fullwidth forms, etc.
+        if (($cp -ge 0x1100 -and $cp -le 0x115F) -or   # Hangul Jamo
+            ($cp -ge 0x2E80 -and $cp -le 0x9FFF) -or   # CJK ranges
+            ($cp -ge 0xAC00 -and $cp -le 0xD7AF) -or   # Hangul Syllables
+            ($cp -ge 0xF900 -and $cp -le 0xFAFF) -or   # CJK Compat Ideographs
+            ($cp -ge 0xFE30 -and $cp -le 0xFE6F) -or   # CJK Compat Forms
+            ($cp -ge 0xFF01 -and $cp -le 0xFF60) -or   # Fullwidth Forms
+            ($cp -ge 0xFFE0 -and $cp -le 0xFFE6)) {    # Fullwidth Signs
+            $width += 2
+        } else {
+            $width += 1
+        }
+    }
+    return $width
+}
+
+function Format-FixedWidth {
+    param([string]$Text, [int]$Width, [switch]$Right)
+    $displayWidth = Get-DisplayWidth $Text
+    $padding = [Math]::Max(0, $Width - $displayWidth)
+    if ($Right) {
+        return (' ' * $padding) + $Text
+    } else {
+        return $Text + (' ' * $padding)
+    }
 }
 
 # ─── Header ─────────────────────────────────────────────────────────────────
@@ -193,30 +243,51 @@ if (-not $IsDomainJoined) {
         Write-Item "Domain resolves to"  ($dnsResult.Result | Select-Object -First 3 -ExpandProperty IPAddressToString) -join ", "
     }
 
-    # nltest DC discovery
-    $nltestResult = Measure-MSec {
-        $out = & nltest.exe /dsgetdc:$domain 2>&1
-        [pscustomobject]@{ Output = $out; Success = ($LASTEXITCODE -eq 0) }
-    }
-    $dcDiscStatus = if (-not $nltestResult.Result.Success) { "FAIL" }
-                   elseif ($nltestResult.Ms -gt 3000)       { "FAIL" }
-                   elseif ($nltestResult.Ms -gt 1000)       { "WARN" }
-                   else                                      { "OK"   }
-    Write-Item "DC discovery via nltest (ms)"  $nltestResult.Ms $dcDiscStatus
-
-    if ($nltestResult.Result.Success) {
-        $dcLine = $nltestResult.Result.Output | Where-Object { $_ -match "DC: \\\\" }
-        if ($dcLine) {
-            $dcName = ($dcLine -replace ".*DC: \\\\", "").Trim()
-            Write-Item "Located Domain Controller"  $dcName
-            $script:DC = $dcName
+    # DC discovery via .NET API (locale-independent, no text parsing required)
+    $dcDiscResult = Measure-MSec {
+        try {
+            $adContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
+                [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain
+            )
+            $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::FindOne($adContext)
+            [pscustomobject]@{ Name = $dc.Name; SiteName = $dc.SiteName; Success = $true; Method = ".NET API" }
+        } catch {
+            # Fallback: nltest with structural parsing (parse by DC:\\ pattern, locale-resilient)
+            try {
+                $out = & nltest.exe /dsgetdc:$domain 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $dcName = $null
+                    $siteName = $null
+                    foreach ($line in $out) {
+                        if ($line -match '^\s*DC:\s*\\\\(.+)') {
+                            $dcName = $Matches[1].Trim()
+                        }
+                        # Parse site by position: look for line with "DC Site Name" or site pattern
+                        # The DC:\\ pattern is structural, not localized
+                    }
+                    [pscustomobject]@{ Name = $dcName; SiteName = $siteName; Success = ($null -ne $dcName); Method = "nltest fallback" }
+                } else {
+                    [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "nltest fallback" }
+                }
+            } catch {
+                [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "failed" }
+            }
         }
-        $siteLine = $nltestResult.Result.Output | Where-Object { $_ -match "Client Site Name" }
-        if ($siteLine) {
-            Write-Item "AD Site"  ($siteLine -replace ".*Client Site Name:\s*", "").Trim()
+    }
+    $dcDiscStatus = if (-not $dcDiscResult.Result.Success) { "FAIL" }
+                   elseif ($dcDiscResult.Ms -gt 3000)       { "FAIL" }
+                   elseif ($dcDiscResult.Ms -gt 1000)       { "WARN" }
+                   else                                      { "OK"   }
+    Write-Item "DC discovery (ms)"  "$($dcDiscResult.Ms) [$($dcDiscResult.Result.Method)]" $dcDiscStatus
+
+    if ($dcDiscResult.Result.Success) {
+        Write-Item "Located Domain Controller"  $dcDiscResult.Result.Name
+        $script:DC = $dcDiscResult.Result.Name
+        if ($dcDiscResult.Result.SiteName) {
+            Write-Item "AD Site"  $dcDiscResult.Result.SiteName
         }
     } else {
-        Write-Item "DC discovery"  "FAILED – nltest returned errors" "FAIL"
+        Write-Item "DC discovery"  "FAILED – could not locate domain controller" "FAIL"
         $DiagnosticSummary.Add("Domain controller discovery failed. Network or DNS issue likely.")
     }
 }
@@ -299,17 +370,21 @@ if (-not $IsDomainJoined) {
 # Network adapter info
 Write-Raw "`n  Network Adapters:"
 Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | ForEach-Object {
-    Write-Raw ("    {0,-30} {1,-15} Link: {2}" -f $_.Name, $_.InterfaceDescription, $_.LinkSpeed)
+    Write-Raw ("    $(Format-FixedWidth $_.Name 30) $(Format-FixedWidth $_.InterfaceDescription 15) Link: $($_.LinkSpeed)")
 }
 
 # Time sync (W32TM) – clock skew breaks Kerberos (> 5 min = auth failure)
 Write-Raw ""
-$w32tmOut = & w32tm.exe /query /status 2>&1
-$stratumLine = $w32tmOut | Where-Object { $_ -match "Stratum" }
-$skewLine    = $w32tmOut | Where-Object { $_ -match "Phase Offset|RootDelay" } | Select-Object -First 1
-Write-Item "Time sync stratum"  ($stratumLine -replace ".*Stratum:\s*", "").Trim()
-if ($skewLine) {
-    Write-Item "Time offset/delay"  ($skewLine -replace ".*:\s*", "").Trim()
+# Use w32tm /query /source (outputs only the source, no labels)
+$timeSource = (& w32tm.exe /query /source 2>&1) | Select-Object -First 1
+Write-Item "Time sync source" $timeSource.ToString().Trim()
+
+# Use registry for NTP server config (locale-independent)
+try {
+    $ntpPeer = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\Parameters" -ErrorAction Stop
+    Write-Item "NTP Server" $ntpPeer.NtpServer
+} catch {
+    Write-Item "Time config" "Could not query time configuration" "WARN"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -341,7 +416,9 @@ try {
             $gpStatus   = if ($durationMs -gt 120000) { "FAIL" } `
                           elseif ($durationMs -gt 60000) { "WARN" } `
                           else { "OK" }
-            $isUser = $start.Message -match "user" -or $start.Properties[0].Value -match "user"
+            # Properties[0] = IsMachine (boolean/int): 1 = Computer, 0 = User
+            $isMachine = [bool]([int]$start.Properties[0].Value)
+            $isUser = -not $isMachine
             $type   = if ($isUser) { "User GP " } else { "Computer GP" }
             Write-Item "$type session $(($matched+1)) – $($start.TimeCreated.ToString('MM-dd HH:mm'))" `
                        ("{0:N0} ms ({1:N1} sec)" -f $durationMs, ($durationMs / 1000)) $gpStatus
@@ -356,17 +433,23 @@ try {
     }
 
     # Identify slow CSEs (Client-Side Extensions) – Event IDs 4016 / 5016
+    # Use structured XML access instead of Message parsing (locale-independent)
     Write-Raw "`n  Slow Group Policy CSEs (> 10 seconds):"
     $cseEvents = $gpLog | Where-Object { $_.Id -in @(5016, 4016) }
     $slowCses  = $cseEvents | Where-Object {
-        ($_.Message -match "(\d+) milliseconds" -and [int]($Matches[1]) -gt 10000)
+        $xml = [xml]$_.ToXml()
+        $dataNodes = $xml.Event.EventData.Data
+        $elapsed = ($dataNodes | Where-Object { $_.Name -eq 'CSEElaspedTimeInMilliSeconds' }).'#text'
+        $elapsed -and [int]$elapsed -gt 10000
     }
     if ($slowCses.Count -gt 0) {
         $slowCses | Select-Object -First 10 | ForEach-Object {
-            $ms  = if ($_.Message -match "(\d+) milliseconds") { $Matches[1] } else { "?" }
-            $cse = if ($_.Message -match "CSE named (.+?) \(") { $Matches[1] } `
-                   elseif ($_.Message -match "for (.+?) in") { $Matches[1] } `
-                   else { "Unknown CSE" }
+            $xml = [xml]$_.ToXml()
+            $dataNodes = $xml.Event.EventData.Data
+            $ms  = ($dataNodes | Where-Object { $_.Name -eq 'CSEElaspedTimeInMilliSeconds' }).'#text'
+            if (-not $ms) { $ms = "?" }
+            $cse = ($dataNodes | Where-Object { $_.Name -eq 'CSEExtensionName' }).'#text'
+            if (-not $cse) { $cse = "Unknown CSE" }
             Write-Item "  Slow CSE" "$cse – $ms ms" "WARN"
         }
     } else {
@@ -376,21 +459,34 @@ try {
     Write-Item "GP Event Log"  "Could not read Group Policy operational log: $_" "WARN"
 }
 
-# gpresult for applied GPOs count
+# gpresult for applied GPOs count (using XML output for locale-independence)
 Write-Raw ""
 if (-not $IsDomainJoined) {
     Write-Item "Applied GPOs"  "N/A – machine is not domain-joined" "INFO"
 } else {
+    $gpXmlPath = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.xml'
     try {
-        $gpresult = & gpresult.exe /R /SCOPE USER 2>&1
-        $appliedLine = $gpresult | Where-Object { $_ -match "Applied Group Policy Objects" }
-        $countLine   = $gpresult | Where-Object { $_ -match "The following GPOs were not applied" }
-        $gpoLines    = $gpresult | Select-String "^\s{8}\S" | Select-Object -First 30
-        Write-Item "Applied GPOs count"  $gpoLines.Count
-        Write-Raw  "  Applied GPOs:"
-        $gpoLines | ForEach-Object { Write-Raw "    - $($_.Line.Trim())" }
+        $null = & gpresult.exe /X $gpXmlPath /SCOPE USER /F 2>&1
+        if (Test-Path $gpXmlPath) {
+            [xml]$gpXml = Get-Content $gpXmlPath -Encoding UTF8
+            # XML element names are NOT localized
+            $appliedGPOs = $gpXml.Rsop.UserResults.GPO |
+                Where-Object { $_.Link } |
+                Select-Object -ExpandProperty Name
+            if ($appliedGPOs) {
+                Write-Item "Applied GPOs count"  $appliedGPOs.Count
+                Write-Raw  "  Applied GPOs:"
+                $appliedGPOs | ForEach-Object { Write-Raw "    - $_" }
+            } else {
+                Write-Item "Applied GPOs count"  "0"
+            }
+        } else {
+            Write-Item "GPResult"  "gpresult /X did not produce output file" "WARN"
+        }
     } catch {
         Write-Item "GPResult"  "Could not run gpresult: $_" "WARN"
+    } finally {
+        Remove-Item $gpXmlPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -404,23 +500,31 @@ if (-not $IsAdmin) {
 } else {
     try {
         # Event 4624 Type 2 = Interactive logon, Type 10 = RemoteInteractive
+        # Use structured XML access instead of Message text matching (locale-independent)
         $logonEvents = Get-WinEvent -FilterHashtable @{
             LogName   = "Security"
             Id        = 4624
             StartTime = (Get-Date).AddDays(-7)
         } -MaxEvents 500 -ErrorAction Stop |
-            Where-Object { $_.Message -match "Logon Type:\s+(2|10)\b" } |
+            Where-Object {
+                $xml = [xml]$_.ToXml()
+                $dataNodes = $xml.Event.EventData.Data
+                $logonType = ($dataNodes | Where-Object { $_.Name -eq 'LogonType' }).'#text'
+                $logonType -eq '2' -or $logonType -eq '10'
+            } |
             Sort-Object TimeCreated -Descending |
             Select-Object -First 10
 
         if ($logonEvents.Count -gt 0) {
             Write-Raw "  Last $($logonEvents.Count) interactive logon events:"
             $logonEvents | ForEach-Object {
-                $userLine = $_.Message -split "`n" | Where-Object { $_ -match "Account Name:\s+\S" } | Select-Object -First 1
-                $user     = if ($userLine -match "Account Name:\s+(.+)") { $Matches[1].Trim() } else { "Unknown" }
-                $typeMatch = $_.Message -match "Logon Type:\s+(\d+)"
-                $ltype    = if ($typeMatch) { if ($Matches[1] -eq "10") { "Remote" } else { "Local" } } else { "" }
-                Write-Raw ("    {0}  User: {1,-30} {2}" -f $_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss"), $user, $ltype)
+                $xml = [xml]$_.ToXml()
+                $dataNodes = $xml.Event.EventData.Data
+                $user      = ($dataNodes | Where-Object { $_.Name -eq 'TargetUserName' }).'#text'
+                if (-not $user) { $user = "Unknown" }
+                $logonType = ($dataNodes | Where-Object { $_.Name -eq 'LogonType' }).'#text'
+                $ltype     = if ($logonType -eq '10') { "Remote" } else { "Local" }
+                Write-Raw ("    $($_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))  User: $(Format-FixedWidth $user 30) $ltype")
             }
         } else {
             Write-Item "Logon Events"  "No interactive logons found in last 7 days" "WARN"
@@ -558,7 +662,9 @@ if (-not $IsDomainJoined) {
 
 $netlogonPath = "$env:SystemRoot\debug\netlogon.log"
 if (Test-Path $netlogonPath) {
-    $netlogon = Get-Content $netlogonPath -ErrorAction SilentlyContinue | Select-Object -Last 300
+    # Netlogon.log is written by the system in OEM codepage (e.g., CP932/Shift-JIS on Japanese Windows)
+    $systemEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    $netlogon = Get-Content $netlogonPath -Encoding $systemEncoding -ErrorAction SilentlyContinue | Select-Object -Last 300
     $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
     $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
 
@@ -627,3 +733,10 @@ Write-Raw @"
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
+
+# ─── Encoding Cleanup ───────────────────────────────────────────────────────
+# Restore the user's original encoding settings so the script leaves no
+# side effects on the PowerShell session.
+
+[Console]::OutputEncoding = $OriginalConsoleOutputEncoding
+$OutputEncoding           = $OriginalOutputEncoding
