@@ -662,7 +662,9 @@ if (-not $IsDomainJoined) {
 
 $netlogonPath = "$env:SystemRoot\debug\netlogon.log"
 if (Test-Path $netlogonPath) {
-    $netlogon = Get-Content $netlogonPath -ErrorAction SilentlyContinue | Select-Object -Last 300
+    # Netlogon.log is written by the system in OEM codepage (e.g., CP932/Shift-JIS on Japanese Windows)
+    $systemEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+    $netlogon = Get-Content $netlogonPath -Encoding $systemEncoding -ErrorAction SilentlyContinue | Select-Object -Last 300
     $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
     $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
 
