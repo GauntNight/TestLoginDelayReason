@@ -119,6 +119,27 @@ function Measure-MSec {
     return [pscustomobject]@{ Result = $result; Ms = $sw.ElapsedMilliseconds }
 }
 
+function Invoke-WithTimeout {
+    param(
+        [scriptblock]$Block,
+        [string]$Source = "Unknown",
+        [int]$TimeoutSeconds = 30
+    )
+    $job = Start-Job -ScriptBlock $Block
+    $completed = $job | Wait-Job -Timeout $TimeoutSeconds
+    if ($null -eq $completed) {
+        $job | Stop-Job
+        $job | Remove-Job -Force
+        Write-ErrorLog -Category "TimeoutError" -Source $Source `
+            -Message "Operation timed out after ${TimeoutSeconds}s" `
+            -Remediation "Check if $Source is responsive. Consider increasing the timeout or investigating connectivity issues."
+        return $null
+    }
+    $result = $job | Receive-Job
+    $job | Remove-Job -Force
+    return $result
+}
+
 function Get-StatusByMs {
     param([long]$Ms, [long]$OkMax, [long]$WarnMax)
     if ($Ms -le $OkMax)   { return "OK" }
