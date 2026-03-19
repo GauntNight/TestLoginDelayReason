@@ -113,6 +113,53 @@ $ReportLines.Add($Header)
 Write-Host $Header -ForegroundColor White
 
 # ═══════════════════════════════════════════════════════════════════════════
+# PRE-FLIGHT VALIDATION
+# ═══════════════════════════════════════════════════════════════════════════
+Write-Section "PRE-FLIGHT VALIDATION"
+
+$CommandAvailability = @{}
+
+# External commands
+$externalCommands = @(
+    @{ Name = "nltest.exe";   Sections = "3 (DNS & DC Discovery), 5 (DC Replication)" }
+    @{ Name = "gpresult.exe"; Sections = "6 (Group Policy)" }
+    @{ Name = "w32tm.exe";    Sections = "3 (DNS & DC Discovery)" }
+)
+
+foreach ($cmd in $externalCommands) {
+    $available = Test-CommandAvailable $cmd.Name
+    $CommandAvailability[$cmd.Name] = $available
+    if (-not $available) {
+        Write-ErrorLog -Category "MissingCommand" -Source $cmd.Name -Message "Not found; affects Section(s) $($cmd.Sections)"
+    } else {
+        Write-Item $cmd.Name "Available" "OK"
+    }
+}
+
+# Key cmdlets
+$cmdlets = @(
+    @{ Name = "Get-PhysicalDisk"; Sections = "2 (Local Device Performance)" }
+    @{ Name = "Resolve-DnsName";  Sections = "3 (DNS & DC Discovery)" }
+    @{ Name = "Get-NetAdapter";   Sections = "4 (Network Configuration)" }
+    @{ Name = "Get-WinEvent";     Sections = "7 (Logon Events)" }
+    @{ Name = "Get-CimInstance";  Sections = "1 (System Information), 2, and others" }
+)
+
+foreach ($cmd in $cmdlets) {
+    $available = Test-CommandAvailable $cmd.Name
+    $CommandAvailability[$cmd.Name] = $available
+    if (-not $available) {
+        Write-ErrorLog -Category "MissingCommand" -Source $cmd.Name -Message "Not found; affects Section(s) $($cmd.Sections)"
+    } else {
+        Write-Item $cmd.Name "Available" "OK"
+    }
+}
+
+$totalCommands = $CommandAvailability.Count
+$availableCount = ($CommandAvailability.Values | Where-Object { $_ -eq $true }).Count
+Write-Item "Command availability" "$availableCount/$totalCommands commands available" $(if ($availableCount -eq $totalCommands) { "OK" } else { "WARN" })
+
+# ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1 – SYSTEM INFORMATION
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "1. SYSTEM INFORMATION"
