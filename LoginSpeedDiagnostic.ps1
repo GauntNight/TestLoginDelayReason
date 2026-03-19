@@ -49,6 +49,8 @@ $PSDefaultParameterValues['Add-Content:Encoding']   = 'utf8'
 $ReportLines = [System.Collections.Generic.List[string]]::new()
 $DiagnosticSummary = [System.Collections.Generic.List[string]]::new()
 $Warnings = [System.Collections.Generic.List[string]]::new()
+$ErrorLog = [System.Collections.Generic.List[PSCustomObject]]::new()
+$SectionStatus = [ordered]@{}
 
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
@@ -79,12 +81,63 @@ function Write-Raw {
     Write-Host $Text
 }
 
+function Write-ErrorLog {
+    param(
+        [ValidateSet("MissingCommand","MissingModule","MissingType","SecurityFailure","OperationError","EnvironmentIssue","TimeoutError")]
+        [string]$Category,
+        [string]$Source,
+        [string]$Message,
+        [string]$Remediation
+    )
+    $entry = [pscustomobject]@{
+        Timestamp   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Category    = $Category
+        Source      = $Source
+        Message     = $Message
+        Remediation = $Remediation
+    }
+    $ErrorLog.Add($entry)
+    $status = if ($Category -eq "SecurityFailure" -or $Category -eq "EnvironmentIssue") { "FAIL" } else { "WARN" }
+    Write-Item -Label "$Source [$Category]" -Value $Message -Status $status
+}
+
+function Test-TypeAvailable {
+    param([string]$TypeName)
+    try { [type]$TypeName | Out-Null; return $true } catch { return $false }
+}
+
+function Test-ModuleAvailable {
+    param([string]$ModuleName)
+    return [bool](Get-Module -ListAvailable -Name $ModuleName -ErrorAction SilentlyContinue)
+}
+
 function Measure-MSec {
     param([scriptblock]$Block)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $result = & $Block
     $sw.Stop()
     return [pscustomobject]@{ Result = $result; Ms = $sw.ElapsedMilliseconds }
+}
+
+function Invoke-WithTimeout {
+    param(
+        [scriptblock]$Block,
+        [string]$Source = "Unknown",
+        [int]$TimeoutSeconds = 30
+    )
+    $job = Start-Job -ScriptBlock $Block
+    $completed = $job | Wait-Job -Timeout $TimeoutSeconds
+    if ($null -eq $completed) {
+        $job | Stop-Job
+        $job | Remove-Job -Force
+        Write-ErrorLog -Category "TimeoutError" -Source $Source `
+            -Message "Operation timed out after ${TimeoutSeconds}s" `
+            -Remediation "Check if $Source is responsive. Consider increasing the timeout or investigating connectivity issues."
+        return $null
+    }
+    $result = $job | Receive-Job
+    $job | Remove-Job -Force
+    return $result
 }
 
 function Get-StatusByMs {
@@ -138,18 +191,103 @@ $Header  = @"
 $ReportLines.Add($Header)
 Write-Host $Header -ForegroundColor White
 
+# ─── Pre-Flight Validation ──────────────────────────────────────────────────
+Write-Section "PRE-FLIGHT VALIDATION"
+
+# .NET Type availability checks
+$RequiredTypes = @(
+    @{ Name = "System.DirectoryServices.ActiveDirectory.DirectoryContext"; Purpose = "AD domain controller discovery" }
+    @{ Name = "System.Net.Dns";                                           Purpose = "DNS resolution" }
+    @{ Name = "System.Net.Sockets.TcpClient";                             Purpose = "TCP connectivity testing" }
+    @{ Name = "System.Diagnostics.Stopwatch";                              Purpose = "Performance timing" }
+)
+
+$TypeAvailability = @{}
+foreach ($t in $RequiredTypes) {
+    $available = Test-TypeAvailable -TypeName $t.Name
+    $TypeAvailability[$t.Name] = $available
+    if ($available) {
+        Write-Item -Label ".NET Type: $($t.Name.Split('.')[-1])" -Value "Available" -Status "OK"
+    } else {
+        Write-ErrorLog -Category "MissingType" -Source $t.Name `
+            -Message "Type '$($t.Name)' not available – $($t.Purpose) will be skipped" `
+            -Remediation "Ensure the required .NET assembly is loaded. For '$($t.Name)', verify that the .NET Framework or relevant assembly is installed."
+    }
+}
+
+# PowerShell version check
+$PSVer = $PSVersionTable.PSVersion
+Write-Item -Label "PowerShell Version" -Value "$($PSVer.Major).$($PSVer.Minor).$($PSVer.Build)" -Status $(if ($PSVer -ge [version]"5.1") { "OK" } else { "WARN" })
+if ($PSVer -lt [version]"5.1") {
+    Write-ErrorLog -Category "EnvironmentIssue" -Source "PSVersion" `
+        -Message "PowerShell $($PSVer) is below 5.1 – some cmdlets may be unavailable" `
+        -Remediation "Upgrade to PowerShell 5.1 or later. Visit https://aka.ms/wmf5download or install PowerShell 7+ from https://aka.ms/powershell"
+}
+
+# Language mode detection
+$LanguageMode = $ExecutionContext.SessionState.LanguageMode
+$langStatus = if ($LanguageMode -eq "FullLanguage") { "OK" } else { "WARN" }
+Write-Item -Label "Language Mode" -Value $LanguageMode -Status $langStatus
+if ($LanguageMode -ne "FullLanguage") {
+    Write-ErrorLog -Category "EnvironmentIssue" -Source "LanguageMode" `
+        -Message "Running in $LanguageMode mode – some diagnostics may be restricted" `
+        -Remediation "ConstrainedLanguage mode limits .NET type access. Run from a FullLanguage session or adjust Device Guard / AppLocker policies."
+}
+
+# Execution policy reporting
+$ExecPolicy = Get-ExecutionPolicy
+Write-Item -Label "Execution Policy" -Value $ExecPolicy -Status "INFO"
+
+# PowerShell module availability checks
+$RequiredModules = @(
+    @{ Name = "ActiveDirectory";  Purpose = "AD user and group lookups" }
+    @{ Name = "GroupPolicy";      Purpose = "GPO enumeration and analysis" }
+    @{ Name = "DnsClient";        Purpose = "DNS diagnostics" }
+    @{ Name = "NetAdapter";       Purpose = "Network adapter information" }
+    @{ Name = "NetTCPIP";         Purpose = "TCP/IP configuration" }
+    @{ Name = "BitsTransfer";     Purpose = "Background transfer diagnostics" }
+    @{ Name = "ScheduledTasks";   Purpose = "Scheduled task analysis" }
+)
+
+$ModuleAvailability = @{}
+foreach ($m in $RequiredModules) {
+    $available = Test-ModuleAvailable -ModuleName $m.Name
+    $ModuleAvailability[$m.Name] = $available
+    if ($available) {
+        Write-Item -Label "Module: $($m.Name)" -Value "Available" -Status "OK"
+    } else {
+        Write-ErrorLog -Category "MissingModule" -Source $m.Name `
+            -Message "Module '$($m.Name)' not available – $($m.Purpose) may be limited" `
+            -Remediation "Install the '$($m.Name)' module via 'Install-Module $($m.Name)' or enable the corresponding Windows feature (e.g., RSAT for ActiveDirectory/GroupPolicy)."
+    }
+}
+
+Write-Item -Label "Pre-flight checks" -Value "Complete" -Status "INFO"
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1 – SYSTEM INFORMATION
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "1. SYSTEM INFORMATION"
+$SectionStatus["1. System Information"] = "In Progress"
 
-$cs   = Get-CimInstance Win32_ComputerSystem
-$os   = Get-CimInstance Win32_OperatingSystem
-$bios = Get-CimInstance Win32_BIOS
+try {
+    $cs   = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+    $os   = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    $bios = Get-CimInstance Win32_BIOS -ErrorAction Stop
+} catch {
+    Write-ErrorLog -Category "OperationError" -Source "Section 1 - System Information" `
+        -Message "Failed to retrieve system information via CIM: $($_.Exception.Message)" `
+        -Remediation "Ensure the WMI/CIM service (winmgmt) is running. Try restarting it with: Restart-Service winmgmt -Force"
+    # Fallback values so downstream sections can continue
+    if (-not $cs)   { $cs   = [pscustomobject]@{ Domain = $env:USERDOMAIN; PartOfDomain = $false; Manufacturer = "Unknown"; Model = "Unknown"; TotalPhysicalMemory = 0; NumberOfLogicalProcessors = 0 } }
+    if (-not $os)   { $os   = [pscustomobject]@{ Caption = "Unknown"; Version = "Unknown"; LastBootUpTime = Get-Date; FreePhysicalMemory = 0 } }
+    if (-not $bios) { $bios = [pscustomobject]@{ SMBIOSBIOSVersion = "Unknown" } }
+}
+
+$IsDomainJoined = if ($cs.PSObject.Properties['PartOfDomain']) { $cs.PartOfDomain } else { $false }
 
 Write-Item "Hostname"         $env:COMPUTERNAME
 Write-Item "Domain"           $cs.Domain
-$IsDomainJoined = $cs.PartOfDomain
 Write-Item "Workgroup/Domain" $(if ($IsDomainJoined) { "Domain joined" } else { "NOT domain joined – AD sections will show N/A" }) `
            $(if ($IsDomainJoined) { "OK" } else { "WARN" })
 Write-Item "Running as Admin"  $(if ($IsAdmin) { "Yes – full data collection" } else { "No – some sections require elevation" }) `
@@ -164,27 +302,47 @@ Write-Item "Architecture"     $env:PROCESSOR_ARCHITECTURE
 Write-Item "Manufacturer"     $cs.Manufacturer
 Write-Item "Model"            $cs.Model
 Write-Item "BIOS Version"     $bios.SMBIOSBIOSVersion
-Write-Item "Total RAM (GB)"   ([math]::Round($cs.TotalPhysicalMemory / 1GB, 1))
-Write-Item "Logical CPUs"     $cs.NumberOfLogicalProcessors
+Write-Item "Total RAM (GB)"   $(if ($cs.TotalPhysicalMemory -gt 0) { [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) } else { "Unknown" })
+Write-Item "Logical CPUs"     $(if ($cs.NumberOfLogicalProcessors -gt 0) { $cs.NumberOfLogicalProcessors } else { "Unknown" })
 Write-Item "Last Boot"        $os.LastBootUpTime
-Write-Item "Uptime (hrs)"     ([math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1))
+Write-Item "Uptime (hrs)"     $(try { [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1) } catch { "Unknown" })
+
+$SectionStatus["1. System Information"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 1*" }) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 2 – LOCAL DEVICE PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "2. LOCAL DEVICE PERFORMANCE"
+$SectionStatus["2. Local Device Performance"] = "In Progress"
+$section2Errors = 0
 
 # CPU load
-$cpuLoad = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
-$cpuStatus = if ($cpuLoad -gt 80) { "WARN" } elseif ($cpuLoad -gt 90) { "FAIL" } else { "OK" }
-Write-Item "Current CPU Load %" $cpuLoad $cpuStatus
+try {
+    $cpuLoad = (Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object -Property LoadPercentage -Average).Average
+    $cpuStatus = if ($cpuLoad -gt 80) { "WARN" } elseif ($cpuLoad -gt 90) { "FAIL" } else { "OK" }
+    Write-Item "Current CPU Load %" $cpuLoad $cpuStatus
+} catch {
+    $section2Errors++
+    Write-ErrorLog -Category "OperationError" -Source "Section 2 - CPU Load" `
+        -Message "Failed to retrieve CPU load via CIM: $($_.Exception.Message)" `
+        -Remediation "Ensure the WMI/CIM service (winmgmt) is running and Win32_Processor class is accessible."
+}
 
 # RAM available
-$ramAvailGB = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
-$ramPctFree = [math]::Round(($os.FreePhysicalMemory / ($cs.TotalPhysicalMemory / 1KB)) * 100, 1)
-$ramStatus  = if ($ramPctFree -lt 10) { "FAIL" } elseif ($ramPctFree -lt 20) { "WARN" } else { "OK" }
-Write-Item "Free RAM (GB)"   $ramAvailGB $ramStatus
-Write-Item "Free RAM %"      "$ramPctFree %" $ramStatus
+try {
+    $ramAvailGB = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
+    $ramPctFree = if ($cs.TotalPhysicalMemory -gt 0) {
+        [math]::Round(($os.FreePhysicalMemory / ($cs.TotalPhysicalMemory / 1KB)) * 100, 1)
+    } else { 0 }
+    $ramStatus  = if ($ramPctFree -lt 10) { "FAIL" } elseif ($ramPctFree -lt 20) { "WARN" } else { "OK" }
+    Write-Item "Free RAM (GB)"   $ramAvailGB $ramStatus
+    Write-Item "Free RAM %"      "$ramPctFree %" $ramStatus
+} catch {
+    $section2Errors++
+    Write-ErrorLog -Category "OperationError" -Source "Section 2 - RAM" `
+        -Message "Failed to calculate RAM availability: $($_.Exception.Message)" `
+        -Remediation "This may occur if System Information (Section 1) failed to retrieve OS/computer data."
+}
 
 # System drive
 $sysDrive = Split-Path $env:SystemRoot -Qualifier
@@ -214,25 +372,42 @@ if ($pf) {
 }
 
 # Time since last boot (very fresh boot can be slow while services settle)
-$uptimeHrs = ((Get-Date) - $os.LastBootUpTime).TotalHours
-if ($uptimeHrs -lt 0.1) {
-    Write-Item "Boot freshness"  "Device just booted – services still initialising" "WARN"
-    $DiagnosticSummary.Add("Device booted very recently; background services may still be initialising.")
+try {
+    $uptimeHrs = ((Get-Date) - $os.LastBootUpTime).TotalHours
+    if ($uptimeHrs -lt 0.1) {
+        Write-Item "Boot freshness"  "Device just booted – services still initialising" "WARN"
+        $DiagnosticSummary.Add("Device booted very recently; background services may still be initialising.")
+    }
+} catch {
+    # Non-critical; skip boot freshness check if LastBootUpTime is invalid
 }
+
+$SectionStatus["2. Local Device Performance"] = if ($section2Errors -gt 0) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 3 – DNS AND DOMAIN CONTROLLER DISCOVERY
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "3. DNS & DOMAIN CONTROLLER DISCOVERY"
+$SectionStatus["3. DNS & DC Discovery"] = "In Progress"
+$section3Errors = 0
 
 if (-not $IsDomainJoined) {
     Write-Item "DNS & DC Discovery"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["3. DNS & DC Discovery"] = "Skipped"
 } else {
     $domain = $cs.Domain
 
     # DNS resolution of the domain
     $dnsResult = Measure-MSec {
-        try { [System.Net.Dns]::GetHostAddresses($domain) } catch { $null }
+        try {
+            [System.Net.Dns]::GetHostAddresses($domain)
+        } catch {
+            Write-ErrorLog -Category "OperationError" -Source "Section 3 - DNS Resolution" `
+                -Message "DNS resolution failed for '$domain': $($_.Exception.Message)" `
+                -Remediation "Check DNS server configuration. Ensure the machine can reach a DNS server that knows the AD domain."
+            $section3Errors++
+            $null
+        }
     }
     $dnsStatus = Get-StatusByMs -Ms $dnsResult.Ms -OkMax 200 -WarnMax 800
     Write-Item "DNS resolve domain (ms)"  $dnsResult.Ms $dnsStatus
@@ -244,34 +419,41 @@ if (-not $IsDomainJoined) {
     }
 
     # DC discovery via .NET API (locale-independent, no text parsing required)
+    # Wrapped in Invoke-WithTimeout to protect against hanging DC discovery
     $dcDiscResult = Measure-MSec {
-        try {
-            $adContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
-                [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain
-            )
-            $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::FindOne($adContext)
-            [pscustomobject]@{ Name = $dc.Name; SiteName = $dc.SiteName; Success = $true; Method = ".NET API" }
-        } catch {
-            # Fallback: nltest with structural parsing (parse by DC:\\ pattern, locale-resilient)
+        $dcResult = Invoke-WithTimeout -Source "Section 3 - DC Discovery" -TimeoutSeconds 30 -Block {
             try {
-                $out = & nltest.exe /dsgetdc:$domain 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    $dcName = $null
-                    $siteName = $null
-                    foreach ($line in $out) {
-                        if ($line -match '^\s*DC:\s*\\\\(.+)') {
-                            $dcName = $Matches[1].Trim()
-                        }
-                        # Parse site by position: look for line with "DC Site Name" or site pattern
-                        # The DC:\\ pattern is structural, not localized
-                    }
-                    [pscustomobject]@{ Name = $dcName; SiteName = $siteName; Success = ($null -ne $dcName); Method = "nltest fallback" }
-                } else {
-                    [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "nltest fallback" }
-                }
+                $adContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
+                    [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $using:domain
+                )
+                $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::FindOne($adContext)
+                [pscustomobject]@{ Name = $dc.Name; SiteName = $dc.SiteName; Success = $true; Method = ".NET API" }
             } catch {
-                [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "failed" }
+                # Fallback: nltest with structural parsing (parse by DC:\\ pattern, locale-resilient)
+                try {
+                    $out = & nltest.exe /dsgetdc:$using:domain 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        $dcName = $null
+                        $siteName = $null
+                        foreach ($line in $out) {
+                            if ($line -match '^\s*DC:\s*\\\\(.+)') {
+                                $dcName = $Matches[1].Trim()
+                            }
+                        }
+                        [pscustomobject]@{ Name = $dcName; SiteName = $siteName; Success = ($null -ne $dcName); Method = "nltest fallback" }
+                    } else {
+                        [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "nltest fallback" }
+                    }
+                } catch {
+                    [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "failed" }
+                }
             }
+        }
+        if ($null -eq $dcResult) {
+            $section3Errors++
+            [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "timeout" }
+        } else {
+            $dcResult
         }
     }
     $dcDiscStatus = if (-not $dcDiscResult.Result.Success) { "FAIL" }
@@ -289,16 +471,21 @@ if (-not $IsDomainJoined) {
     } else {
         Write-Item "DC discovery"  "FAILED – could not locate domain controller" "FAIL"
         $DiagnosticSummary.Add("Domain controller discovery failed. Network or DNS issue likely.")
+        $section3Errors++
     }
 }
+$SectionStatus["3. DNS & DC Discovery"] = if ($SectionStatus["3. DNS & DC Discovery"] -eq "Skipped") { "Skipped" } elseif ($section3Errors -gt 0) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 4 – NETWORK CONNECTIVITY TO DOMAIN CONTROLLER
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "4. NETWORK CONNECTIVITY TO DOMAIN CONTROLLER"
+$SectionStatus["4. Network Connectivity"] = "In Progress"
+$section4Errors = 0
 
 if (-not $IsDomainJoined) {
     Write-Item "DC Network Connectivity"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["4. Network Connectivity"] = "Skipped"
 } else {
     if (-not $script:DC) {
         # Fallback: resolve DC from DNS SRV record
@@ -353,9 +540,18 @@ if (-not $IsDomainJoined) {
             }
         }
 
-        # SMB / SYSVOL share availability
+        # SMB / SYSVOL share availability (with timeout protection)
+        $sysvolDC = $script:DC
         $sysvolResult = Measure-MSec {
-            Test-Path "\\$($script:DC)\SYSVOL" -ErrorAction SilentlyContinue
+            $testResult = Invoke-WithTimeout -Source "Section 4 - SYSVOL Test" -TimeoutSeconds 30 -Block {
+                Test-Path "\\$using:sysvolDC\SYSVOL" -ErrorAction SilentlyContinue
+            }
+            if ($null -eq $testResult) {
+                $section4Errors++
+                $false
+            } else {
+                $testResult
+            }
         }
         $sysvolStatus = if ($sysvolResult.Result) {
                             if ($sysvolResult.Ms -gt 3000) { "WARN" } else { "OK" }
@@ -363,9 +559,11 @@ if (-not $IsDomainJoined) {
         Write-Item "SYSVOL share reachable"  $(if ($sysvolResult.Result) { "Yes ($($sysvolResult.Ms) ms)" } else { "No" }) $sysvolStatus
         if (-not $sysvolResult.Result) {
             $DiagnosticSummary.Add("SYSVOL is not reachable. GPOs and logon scripts cannot be applied from $($script:DC).")
+            $section4Errors++
         }
     }
 }
+$SectionStatus["4. Network Connectivity"] = if ($SectionStatus["4. Network Connectivity"] -eq "Skipped") { "Skipped" } elseif ($section4Errors -gt 0) { "Partial" } else { "Completed" }
 
 # Network adapter info
 Write-Raw "`n  Network Adapters:"
@@ -391,9 +589,11 @@ try {
 # SECTION 5 – GROUP POLICY PROCESSING TIMES (EVENT LOG)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "5. GROUP POLICY PROCESSING TIMES (Last 5 logons)"
+$SectionStatus["5. Group Policy Processing"] = "In Progress"
 
 if (-not $IsDomainJoined) {
     Write-Item "Group Policy"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["5. Group Policy Processing"] = "Skipped"
 } elseif (-not $IsAdmin) {
     Write-Item "Group Policy Event Log"  "Requires administrator rights to read – run as admin for GP timing data" "WARN"
 }
@@ -459,6 +659,10 @@ try {
     Write-Item "GP Event Log"  "Could not read Group Policy operational log: $_" "WARN"
 }
 
+if ($SectionStatus["5. Group Policy Processing"] -ne "Skipped") {
+    $SectionStatus["5. Group Policy Processing"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 5*" }) { "Partial" } else { "Completed" }
+}
+
 # gpresult for applied GPOs count (using XML output for locale-independence)
 Write-Raw ""
 if (-not $IsDomainJoined) {
@@ -494,6 +698,7 @@ if (-not $IsDomainJoined) {
 # SECTION 6 – LOGON EVENT TIMING (Security Event Log)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "6. RECENT INTERACTIVE LOGON EVENTS"
+$SectionStatus["6. Logon Events"] = "In Progress"
 
 if (-not $IsAdmin) {
     Write-Item "Security Event Log"  "Requires administrator rights – run as admin to see logon events" "WARN"
@@ -534,42 +739,55 @@ if (-not $IsAdmin) {
     }
 }
 
+$SectionStatus["6. Logon Events"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 6*" }) { "Partial" } else { "Completed" }
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 7 – USER PROFILE
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "7. USER PROFILE"
+$SectionStatus["7. User Profile"] = "In Progress"
 
-# Without admin, Win32_UserProfile only returns the current user's profile
-$profiles = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
-            Where-Object { -not $_.Special } |
-            Sort-Object LastUseTime -Descending
+try {
+    # Without admin, Win32_UserProfile only returns the current user's profile
+    $profiles = Get-CimInstance Win32_UserProfile -ErrorAction Stop |
+                Where-Object { -not $_.Special } |
+                Sort-Object LastUseTime -Descending
 
-if (-not $IsAdmin) {
-    Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
-}
-
-Write-Raw "  Loaded profiles:"
-$profiles | Select-Object -First 10 | ForEach-Object {
-    $profilePath = $_.LocalPath
-    $sizeGB      = "?"
-    try {
-        $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
-                      Measure-Object Length -Sum).Sum
-        $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
-    } catch {}
-    $isRoaming = $_.RoamingConfigured
-    $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
-    Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
-
-    if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
-        $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+    if (-not $IsAdmin) {
+        Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
     }
+
+    Write-Raw "  Loaded profiles:"
+    $profiles | Select-Object -First 10 | ForEach-Object {
+        $profilePath = $_.LocalPath
+        $sizeGB      = "?"
+        try {
+            $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
+                          Measure-Object Length -Sum).Sum
+            $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
+        } catch {}
+        $isRoaming = $_.RoamingConfigured
+        $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
+        Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
+
+        if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
+            $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+        }
+    }
+} catch {
+    $category = if ($_.Exception.Message -match "Access.denied|not have permission") { "SecurityFailure" } else { "OperationError" }
+    Write-ErrorLog -Category $category -Source "Section 7 - User Profile" `
+        -Message "Failed to retrieve user profiles via CIM: $($_.Exception.Message)" `
+        -Remediation "Ensure the WMI/CIM service (winmgmt) is running and Win32_UserProfile class is accessible."
 }
+
+$SectionStatus["7. User Profile"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 7*" }) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 8 – LOGON SCRIPTS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "8. LOGON SCRIPTS & STARTUP ITEMS"
+$SectionStatus["8. Logon Scripts"] = "In Progress"
 
 # Check for logon scripts via Group Policy registry keys
 $gpoLogonScripts = @(
@@ -578,18 +796,25 @@ $gpoLogonScripts = @(
 )
 
 $foundScripts = $false
-foreach ($regPath in $gpoLogonScripts) {
-    if (Test-Path $regPath) {
-        $scripts = Get-ChildItem $regPath -ErrorAction SilentlyContinue
-        foreach ($s in $scripts) {
-            $scriptVal = Get-ItemProperty $s.PSPath -ErrorAction SilentlyContinue
-            Write-Item "GP Script"  "$($scriptVal.Script) $($scriptVal.Parameters)" "INFO"
-            $foundScripts = $true
+try {
+    foreach ($regPath in $gpoLogonScripts) {
+        if (Test-Path $regPath) {
+            $scripts = Get-ChildItem $regPath -ErrorAction Stop
+            foreach ($s in $scripts) {
+                $scriptVal = Get-ItemProperty $s.PSPath -ErrorAction SilentlyContinue
+                Write-Item "GP Script"  "$($scriptVal.Script) $($scriptVal.Parameters)" "INFO"
+                $foundScripts = $true
+            }
         }
     }
-}
-if (-not $foundScripts) {
-    Write-Item "GP Logon Scripts"  "None detected in registry" "OK"
+    if (-not $foundScripts) {
+        Write-Item "GP Logon Scripts"  "None detected in registry" "OK"
+    }
+} catch {
+    $category = if ($_.Exception.Message -match "Access.denied|not have permission") { "SecurityFailure" } else { "OperationError" }
+    Write-ErrorLog -Category $category -Source "Section 8 - GP Scripts Registry" `
+        -Message "Failed to enumerate GP logon scripts from registry: $($_.Exception.Message)" `
+        -Remediation "Ensure you have read access to the Group Policy registry keys under HKLM/HKCU."
 }
 
 # Startup programs (HKLM Run keys) – count only as proxy for load
@@ -607,10 +832,13 @@ foreach ($key in $runKeys) {
     } catch {}
 }
 
+$SectionStatus["8. Logon Scripts"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 8*" }) { "Partial" } else { "Completed" }
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 9 – WINDOWS LOGON PERFORMANCE (Winlogon event channel)
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "9. WINDOWS LOGON PERFORMANCE EVENTS"
+$SectionStatus["9. Winlogon Performance"] = "In Progress"
 
 if (-not $IsAdmin) {
     Write-Item "Winlogon Event Log"  "Requires administrator rights – run as admin for Winlogon timing data" "WARN"
@@ -651,45 +879,61 @@ if ($notifPackages) {
     Write-Item "Winlogon Notify Packages"  $notifPackages "INFO"
 }
 
+$SectionStatus["9. Winlogon Performance"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 9*" }) { "Partial" } else { "Completed" }
+
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 10 – NETLOGON LOG ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "10. NETLOGON LOG ANALYSIS"
+$SectionStatus["10. Netlogon Analysis"] = "In Progress"
 
 if (-not $IsDomainJoined) {
     Write-Item "NETLOGON Log"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["10. Netlogon Analysis"] = "Skipped"
 }
 
-$netlogonPath = "$env:SystemRoot\debug\netlogon.log"
-if (Test-Path $netlogonPath) {
-    # Netlogon.log is written by the system in OEM codepage (e.g., CP932/Shift-JIS on Japanese Windows)
-    $systemEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
-    $netlogon = Get-Content $netlogonPath -Encoding $systemEncoding -ErrorAction SilentlyContinue | Select-Object -Last 300
-    $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
-    $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
+try {
+    $netlogonPath = "$env:SystemRoot\debug\netlogon.log"
+    if (Test-Path $netlogonPath) {
+        # Netlogon.log is written by the system in OEM codepage (e.g., CP932/Shift-JIS on Japanese Windows)
+        $systemEncoding = [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+        $netlogon = Get-Content $netlogonPath -Encoding $systemEncoding -ErrorAction Stop | Select-Object -Last 300
+        $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
+        $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
 
-    Write-Item "Netlogon log"   "Found at $netlogonPath"
-    Write-Item "Last 300 lines" "Errors/warnings found: $($errors.Count)" `
-               $(if ($errors.Count -gt 5) { "WARN" } elseif ($errors.Count -gt 0) { "WARN" } else { "OK" })
+        Write-Item "Netlogon log"   "Found at $netlogonPath"
+        Write-Item "Last 300 lines" "Errors/warnings found: $($errors.Count)" `
+                   $(if ($errors.Count -gt 5) { "WARN" } elseif ($errors.Count -gt 0) { "WARN" } else { "OK" })
 
-    if ($errors.Count -gt 0) {
-        Write-Raw "  Recent NETLOGON errors:"
-        $errors | Select-Object -Last 10 | ForEach-Object { Write-Raw "    $_" }
-        $DiagnosticSummary.Add("NETLOGON.LOG contains $($errors.Count) errors – review $netlogonPath for authentication issues.")
+        if ($errors.Count -gt 0) {
+            Write-Raw "  Recent NETLOGON errors:"
+            $errors | Select-Object -Last 10 | ForEach-Object { Write-Raw "    $_" }
+            $DiagnosticSummary.Add("NETLOGON.LOG contains $($errors.Count) errors – review $netlogonPath for authentication issues.")
+        }
+        if ($dcDisc.Count -gt 0) {
+            Write-Raw "  DC discovery attempts (last 5):"
+            $dcDisc | Select-Object -Last 5 | ForEach-Object { Write-Raw "    $_" }
+        }
+    } else {
+        Write-Item "Netlogon log"  "Not found at $netlogonPath (may need debug logging enabled)" "INFO"
+        Write-Raw  "  To enable: nltest /dbflag:0x2080ffff"
     }
-    if ($dcDisc.Count -gt 0) {
-        Write-Raw "  DC discovery attempts (last 5):"
-        $dcDisc | Select-Object -Last 5 | ForEach-Object { Write-Raw "    $_" }
-    }
-} else {
-    Write-Item "Netlogon log"  "Not found at $netlogonPath (may need debug logging enabled)" "INFO"
-    Write-Raw  "  To enable: nltest /dbflag:0x2080ffff"
+} catch {
+    $category = if ($_.Exception.Message -match "Access.denied|not have permission|UnauthorizedAccess") { "SecurityFailure" } else { "OperationError" }
+    Write-ErrorLog -Category $category -Source "Section 10 - Netlogon Analysis" `
+        -Message "Failed to read netlogon log: $($_.Exception.Message)" `
+        -Remediation "Ensure you have read access to $env:SystemRoot\debug\netlogon.log. Run as administrator if needed."
+}
+
+if ($SectionStatus["10. Netlogon Analysis"] -ne "Skipped") {
+    $SectionStatus["10. Netlogon Analysis"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 10*" }) { "Partial" } else { "Completed" }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 11 – DIAGNOSTIC SUMMARY & RECOMMENDATIONS
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "11. DIAGNOSTIC SUMMARY & RECOMMENDATIONS"
+$SectionStatus["11. Summary & Recommendations"] = "In Progress"
 
 if ($Warnings.Count -gt 0) {
     Write-Raw "  Warnings / Failures detected:"
@@ -729,10 +973,105 @@ Write-Raw @"
   ──────────────────────────────────────────────────────────────────────
 "@
 
+$SectionStatus["11. Summary & Recommendations"] = "Completed"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 12 – ERROR LOG
+# ═══════════════════════════════════════════════════════════════════════════
+Write-Section "12. ERROR LOG"
+$SectionStatus["12. Error Log"] = "In Progress"
+
+# ─── Section Status Summary Table ───────────────────────────────────────────
+Write-Raw ""
+Write-Raw "  ┌─────────────────────────────────────────────────────────────┐"
+Write-Raw "  │                    SECTION STATUS SUMMARY                   │"
+Write-Raw "  ├──────────────────────────────────────────┬──────────────────┤"
+Write-Raw "  │ Section                                  │ Status           │"
+Write-Raw "  ├──────────────────────────────────────────┼──────────────────┤"
+foreach ($key in $SectionStatus.Keys) {
+    if ($key -eq "12. Error Log") { continue }
+    $statusVal = $SectionStatus[$key]
+    $sectionCol = Format-FixedWidth $key 40
+    $statusCol  = Format-FixedWidth $statusVal 16
+    Write-Raw "  │ $sectionCol │ $statusCol │"
+}
+Write-Raw "  └──────────────────────────────────────────┴──────────────────┘"
+Write-Raw ""
+
+# ─── Error Counts by Category ──────────────────────────────────────────────
+if ($ErrorLog.Count -gt 0) {
+    Write-Raw "  Error Counts by Category:"
+    Write-Raw "  ─────────────────────────────────────────"
+    $grouped = $ErrorLog | Group-Object -Property Category | Sort-Object Count -Descending
+    foreach ($g in $grouped) {
+        Write-Raw ("  {0,-30} {1}" -f $g.Name, $g.Count)
+    }
+    Write-Raw ""
+
+    # ─── Remediation Guidance ───────────────────────────────────────────────
+    $remediationCategories = @("MissingCommand", "MissingModule", "MissingType", "SecurityFailure", "EnvironmentIssue")
+    $remediationErrors = $ErrorLog | Where-Object { $_.Category -in $remediationCategories -and $_.Remediation }
+    if ($remediationErrors) {
+        Write-Raw "  ╔═══════════════════════════════════════════════════════════════╗"
+        Write-Raw "  ║              REMEDIATION GUIDANCE                             ║"
+        Write-Raw "  ╚═══════════════════════════════════════════════════════════════╝"
+        Write-Raw ""
+        $remGroups = $remediationErrors | Group-Object -Property Category
+        foreach ($rg in $remGroups) {
+            Write-Raw "  [$($rg.Name)]"
+            foreach ($entry in $rg.Group) {
+                Write-Raw "    • $($entry.Source): $($entry.Remediation)"
+            }
+            Write-Raw ""
+        }
+    }
+
+    # ─── Error Entries ──────────────────────────────────────────────────────
+    Write-Raw "  All Error Entries ($($ErrorLog.Count)):"
+    Write-Raw "  ─────────────────────────────────────────"
+    foreach ($entry in $ErrorLog) {
+        Write-Raw "  Timestamp   : $($entry.Timestamp)"
+        Write-Raw "  Category    : $($entry.Category)"
+        Write-Raw "  Source      : $($entry.Source)"
+        Write-Raw "  Message     : $($entry.Message)"
+        if ($entry.Remediation) {
+            Write-Raw "  Remediation : $($entry.Remediation)"
+        }
+        Write-Raw ""
+    }
+} else {
+    Write-Raw "  No errors were recorded during diagnostics."
+    Write-Raw ""
+}
+
+$SectionStatus["12. Error Log"] = "Completed"
+
 # ─── Save Report ────────────────────────────────────────────────────────────
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
+
+# ─── JSON Error Log Export ─────────────────────────────────────────────────
+$JsonPath = $OutputPath -replace '\.txt$', '_errors.json'
+try {
+    $jsonExport = [ordered]@{
+        metadata = [ordered]@{
+            timestamp     = $RunTime
+            hostname      = $env:COMPUTERNAME
+            psVersion     = $PSVersionTable.PSVersion.ToString()
+            psEdition     = if ($PSVersionTable.PSEdition) { $PSVersionTable.PSEdition } else { "Desktop" }
+            languageMode  = $ExecutionContext.SessionState.LanguageMode.ToString()
+            isAdmin       = $IsAdmin
+            isDomainJoined = $IsDomainJoined
+        }
+        sectionStatus = $SectionStatus
+        errors        = @($ErrorLog)
+    }
+    $jsonExport | ConvertTo-Json -Depth 4 | Out-File -FilePath $JsonPath -Encoding UTF8 -Force
+    Write-Host "JSON error log written to: $JsonPath" -ForegroundColor Green
+} catch {
+    Write-Host "Could not write JSON error log to ${JsonPath}: $_" -ForegroundColor Yellow
+}
 
 # ─── Encoding Cleanup ───────────────────────────────────────────────────────
 # Restore the user's original encoding settings so the script leaves no

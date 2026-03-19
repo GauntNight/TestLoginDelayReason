@@ -20,6 +20,47 @@ if %errorlevel% neq 0 (
     echo.
 )
 
+:: --------------- Environment pre-flight checks (advisory only) ---------------
+
+:: PowerShell version detection
+echo Checking PowerShell environment...
+for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -Command "$PSVersionTable.PSVersion.ToString()" 2^>nul`) do set "PS_VER=%%V"
+if defined PS_VER (
+    echo   PowerShell version: %PS_VER%
+    :: Warn if version is below 5.1
+    for /f "tokens=1,2 delims=." %%A in ("%PS_VER%") do (
+        if %%A LSS 5 (
+            echo   WARNING: PowerShell version %PS_VER% is below 5.1. Some diagnostics may not work correctly.
+        ) else if %%A EQU 5 if %%B LSS 1 (
+            echo   WARNING: PowerShell version %PS_VER% is below 5.1. Some diagnostics may not work correctly.
+        )
+    )
+) else (
+    echo   WARNING: Could not detect PowerShell version.
+)
+
+:: Check critical cmdlet availability (Get-CimInstance from CimCmdlets)
+for /f "usebackq delims=" %%R in (`powershell.exe -NoProfile -Command "if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) { 'Available' } else { 'Missing' }" 2^>nul`) do set "CIM_STATUS=%%R"
+if /i "%CIM_STATUS%"=="Available" (
+    echo   Get-CimInstance: Available
+) else (
+    echo   WARNING: Get-CimInstance cmdlet not available. WMI-based diagnostics may fail.
+)
+
+:: Language mode check
+for /f "usebackq delims=" %%L in (`powershell.exe -NoProfile -Command "$ExecutionContext.SessionState.LanguageMode" 2^>nul`) do set "LANG_MODE=%%L"
+if defined LANG_MODE (
+    echo   Language mode: %LANG_MODE%
+    if /i not "%LANG_MODE%"=="FullLanguage" (
+        echo   WARNING: PowerShell is running in %LANG_MODE% mode. Some diagnostics may be restricted.
+    )
+) else (
+    echo   WARNING: Could not detect PowerShell language mode.
+)
+echo.
+
+:: -------------------------------------------------------------------------
+
 :: Determine script directory
 set "SCRIPT_DIR=%~dp0"
 set "PS_SCRIPT=%SCRIPT_DIR%LoginSpeedDiagnostic.ps1"
