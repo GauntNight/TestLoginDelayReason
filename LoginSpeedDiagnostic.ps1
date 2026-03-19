@@ -451,21 +451,34 @@ try {
     Write-Item "GP Event Log"  "Could not read Group Policy operational log: $_" "WARN"
 }
 
-# gpresult for applied GPOs count
+# gpresult for applied GPOs count (using XML output for locale-independence)
 Write-Raw ""
 if (-not $IsDomainJoined) {
     Write-Item "Applied GPOs"  "N/A – machine is not domain-joined" "INFO"
 } else {
+    $gpXmlPath = [System.IO.Path]::GetTempFileName() -replace '\.tmp$', '.xml'
     try {
-        $gpresult = & gpresult.exe /R /SCOPE USER 2>&1
-        $appliedLine = $gpresult | Where-Object { $_ -match "Applied Group Policy Objects" }
-        $countLine   = $gpresult | Where-Object { $_ -match "The following GPOs were not applied" }
-        $gpoLines    = $gpresult | Select-String "^\s{8}\S" | Select-Object -First 30
-        Write-Item "Applied GPOs count"  $gpoLines.Count
-        Write-Raw  "  Applied GPOs:"
-        $gpoLines | ForEach-Object { Write-Raw "    - $($_.Line.Trim())" }
+        $null = & gpresult.exe /X $gpXmlPath /SCOPE USER /F 2>&1
+        if (Test-Path $gpXmlPath) {
+            [xml]$gpXml = Get-Content $gpXmlPath -Encoding UTF8
+            # XML element names are NOT localized
+            $appliedGPOs = $gpXml.Rsop.UserResults.GPO |
+                Where-Object { $_.Link } |
+                Select-Object -ExpandProperty Name
+            if ($appliedGPOs) {
+                Write-Item "Applied GPOs count"  $appliedGPOs.Count
+                Write-Raw  "  Applied GPOs:"
+                $appliedGPOs | ForEach-Object { Write-Raw "    - $_" }
+            } else {
+                Write-Item "Applied GPOs count"  "0"
+            }
+        } else {
+            Write-Item "GPResult"  "gpresult /X did not produce output file" "WARN"
+        }
     } catch {
         Write-Item "GPResult"  "Could not run gpresult: $_" "WARN"
+    } finally {
+        Remove-Item $gpXmlPath -Force -ErrorAction SilentlyContinue
     }
 }
 
