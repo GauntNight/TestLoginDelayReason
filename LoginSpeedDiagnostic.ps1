@@ -369,18 +369,34 @@ if (-not $IsDomainJoined) {
 
 # Network adapter info
 Write-Raw "`n  Network Adapters:"
-Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | ForEach-Object {
-    Write-Raw ("    {0,-30} {1,-15} Link: {2}" -f $_.Name, $_.InterfaceDescription, $_.LinkSpeed)
+try {
+    $adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" }
+    if ($adapters) {
+        $adapters | ForEach-Object {
+            Write-Raw ("    {0,-30} {1,-15} Link: {2}" -f $_.Name, $_.InterfaceDescription, $_.LinkSpeed)
+        }
+    } else {
+        Write-Item "Network Adapters" "No active adapters found" "INFO"
+    }
+} catch {
+    Write-ErrorLog -Category "OperationError" -Source "Section 4 - Network Adapters" -Message $_.Exception.Message
+    Write-Item "Network Adapters" "Could not enumerate adapters" "WARN"
 }
 
 # Time sync (W32TM) – clock skew breaks Kerberos (> 5 min = auth failure)
 Write-Raw ""
-$w32tmOut = & w32tm.exe /query /status 2>&1
-$stratumLine = $w32tmOut | Where-Object { $_ -match "Stratum" }
-$skewLine    = $w32tmOut | Where-Object { $_ -match "Phase Offset|RootDelay" } | Select-Object -First 1
-Write-Item "Time sync stratum"  ($stratumLine -replace ".*Stratum:\s*", "").Trim()
-if ($skewLine) {
-    Write-Item "Time offset/delay"  ($skewLine -replace ".*:\s*", "").Trim()
+try {
+    $w32tmOut = & w32tm.exe /query /status 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "w32tm.exe returned exit code $LASTEXITCODE" }
+    $stratumLine = $w32tmOut | Where-Object { $_ -match "Stratum" }
+    $skewLine    = $w32tmOut | Where-Object { $_ -match "Phase Offset|RootDelay" } | Select-Object -First 1
+    Write-Item "Time sync stratum"  ($stratumLine -replace ".*Stratum:\s*", "").Trim()
+    if ($skewLine) {
+        Write-Item "Time offset/delay"  ($skewLine -replace ".*:\s*", "").Trim()
+    }
+} catch {
+    Write-ErrorLog -Category "OperationError" -Source "Section 4 - Time Sync (w32tm)" -Message $_.Exception.Message
+    Write-Item "Time sync" "Could not query time sync status" "WARN"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -511,6 +527,11 @@ $profiles = Get-CimInstance Win32_UserProfile -ErrorAction SilentlyContinue |
             Where-Object { -not $_.Special } |
             Sort-Object LastUseTime -Descending
 
+if (-not $profiles) {
+    Write-ErrorLog -Category "OperationError" -Source "Section 7 - User Profile" -Message "Could not retrieve user profiles from Win32_UserProfile"
+    Write-Item "User Profiles" "No profile data available" "INFO"
+}
+
 if (-not $IsAdmin) {
     Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
 }
@@ -638,6 +659,9 @@ if (-not $IsDomainJoined) {
 $netlogonPath = "$env:SystemRoot\debug\netlogon.log"
 if (Test-Path $netlogonPath) {
     $netlogon = Get-Content $netlogonPath -ErrorAction SilentlyContinue | Select-Object -Last 300
+    if (-not $netlogon) {
+        Write-Item "Netlogon log" "File exists but could not be read or is empty" "INFO"
+    }
     $errors   = $netlogon | Where-Object { $_ -match "ERROR|CRITICAL|NO_RESPONSE" }
     $dcDisc   = $netlogon | Where-Object { $_ -match "DsGetDcName|Trying to find" }
 
