@@ -20,6 +20,23 @@ if %errorlevel% neq 0 (
     echo.
 )
 
+:: Check whether PowerShell is available
+where powershell.exe >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: PowerShell is not available or not in PATH.
+    echo        Please install PowerShell or ensure it is in your system PATH.
+    pause
+    exit /b 2
+)
+
+:: Check execution policy (advisory only)
+for /f "usebackq delims=" %%P in (`powershell.exe -NoProfile -Command "Get-ExecutionPolicy"`) do set "EXEC_POLICY=%%P"
+if /i "%EXEC_POLICY%"=="Restricted" (
+    echo NOTE: Current PowerShell execution policy is Restricted.
+    echo       The launcher will use -ExecutionPolicy Bypass to run the script.
+    echo.
+)
+
 :: Determine script directory
 set "SCRIPT_DIR=%~dp0"
 set "PS_SCRIPT=%SCRIPT_DIR%LoginSpeedDiagnostic.ps1"
@@ -35,6 +52,13 @@ echo Results will be saved to %SCRIPT_DIR%LoginSpeedReport.txt
 echo.
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%" -OutputPath "%SCRIPT_DIR%LoginSpeedReport.txt"
+set "PS_EXIT=%ERRORLEVEL%"
+
+if %PS_EXIT% neq 0 (
+    echo.
+    echo WARNING: The diagnostic script exited with code %PS_EXIT%.
+    echo          Check the report for error details.
+)
 
 echo.
 echo Done. Report saved to: %SCRIPT_DIR%LoginSpeedReport.txt
