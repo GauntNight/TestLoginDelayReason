@@ -101,6 +101,16 @@ function Write-ErrorLog {
     Write-Item -Label "$Source [$Category]" -Value $Message -Status $status
 }
 
+function Test-TypeAvailable {
+    param([string]$TypeName)
+    try { [type]$TypeName | Out-Null; return $true } catch { return $false }
+}
+
+function Test-ModuleAvailable {
+    param([string]$ModuleName)
+    return [bool](Get-Module -ListAvailable -Name $ModuleName -ErrorAction SilentlyContinue)
+}
+
 function Measure-MSec {
     param([scriptblock]$Block)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
