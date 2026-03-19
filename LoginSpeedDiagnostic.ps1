@@ -388,15 +388,26 @@ $SectionStatus["2. Local Device Performance"] = if ($section2Errors -gt 0) { "Pa
 # SECTION 3 – DNS AND DOMAIN CONTROLLER DISCOVERY
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "3. DNS & DOMAIN CONTROLLER DISCOVERY"
+$SectionStatus["3. DNS & DC Discovery"] = "In Progress"
+$section3Errors = 0
 
 if (-not $IsDomainJoined) {
     Write-Item "DNS & DC Discovery"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["3. DNS & DC Discovery"] = "Skipped"
 } else {
     $domain = $cs.Domain
 
     # DNS resolution of the domain
     $dnsResult = Measure-MSec {
-        try { [System.Net.Dns]::GetHostAddresses($domain) } catch { $null }
+        try {
+            [System.Net.Dns]::GetHostAddresses($domain)
+        } catch {
+            Write-ErrorLog -Category "OperationError" -Source "Section 3 - DNS Resolution" `
+                -Message "DNS resolution failed for '$domain': $($_.Exception.Message)" `
+                -Remediation "Check DNS server configuration. Ensure the machine can reach a DNS server that knows the AD domain."
+            $section3Errors++
+            $null
+        }
     }
     $dnsStatus = Get-StatusByMs -Ms $dnsResult.Ms -OkMax 200 -WarnMax 800
     Write-Item "DNS resolve domain (ms)"  $dnsResult.Ms $dnsStatus
@@ -408,34 +419,41 @@ if (-not $IsDomainJoined) {
     }
 
     # DC discovery via .NET API (locale-independent, no text parsing required)
+    # Wrapped in Invoke-WithTimeout to protect against hanging DC discovery
     $dcDiscResult = Measure-MSec {
-        try {
-            $adContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
-                [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain
-            )
-            $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::FindOne($adContext)
-            [pscustomobject]@{ Name = $dc.Name; SiteName = $dc.SiteName; Success = $true; Method = ".NET API" }
-        } catch {
-            # Fallback: nltest with structural parsing (parse by DC:\\ pattern, locale-resilient)
+        $dcResult = Invoke-WithTimeout -Source "Section 3 - DC Discovery" -TimeoutSeconds 30 -Block {
             try {
-                $out = & nltest.exe /dsgetdc:$domain 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    $dcName = $null
-                    $siteName = $null
-                    foreach ($line in $out) {
-                        if ($line -match '^\s*DC:\s*\\\\(.+)') {
-                            $dcName = $Matches[1].Trim()
-                        }
-                        # Parse site by position: look for line with "DC Site Name" or site pattern
-                        # The DC:\\ pattern is structural, not localized
-                    }
-                    [pscustomobject]@{ Name = $dcName; SiteName = $siteName; Success = ($null -ne $dcName); Method = "nltest fallback" }
-                } else {
-                    [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "nltest fallback" }
-                }
+                $adContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
+                    [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $using:domain
+                )
+                $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::FindOne($adContext)
+                [pscustomobject]@{ Name = $dc.Name; SiteName = $dc.SiteName; Success = $true; Method = ".NET API" }
             } catch {
-                [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "failed" }
+                # Fallback: nltest with structural parsing (parse by DC:\\ pattern, locale-resilient)
+                try {
+                    $out = & nltest.exe /dsgetdc:$using:domain 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        $dcName = $null
+                        $siteName = $null
+                        foreach ($line in $out) {
+                            if ($line -match '^\s*DC:\s*\\\\(.+)') {
+                                $dcName = $Matches[1].Trim()
+                            }
+                        }
+                        [pscustomobject]@{ Name = $dcName; SiteName = $siteName; Success = ($null -ne $dcName); Method = "nltest fallback" }
+                    } else {
+                        [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "nltest fallback" }
+                    }
+                } catch {
+                    [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "failed" }
+                }
             }
+        }
+        if ($null -eq $dcResult) {
+            $section3Errors++
+            [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "timeout" }
+        } else {
+            $dcResult
         }
     }
     $dcDiscStatus = if (-not $dcDiscResult.Result.Success) { "FAIL" }
@@ -453,16 +471,21 @@ if (-not $IsDomainJoined) {
     } else {
         Write-Item "DC discovery"  "FAILED – could not locate domain controller" "FAIL"
         $DiagnosticSummary.Add("Domain controller discovery failed. Network or DNS issue likely.")
+        $section3Errors++
     }
 }
+$SectionStatus["3. DNS & DC Discovery"] = if ($SectionStatus["3. DNS & DC Discovery"] -eq "Skipped") { "Skipped" } elseif ($section3Errors -gt 0) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 4 – NETWORK CONNECTIVITY TO DOMAIN CONTROLLER
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "4. NETWORK CONNECTIVITY TO DOMAIN CONTROLLER"
+$SectionStatus["4. Network Connectivity"] = "In Progress"
+$section4Errors = 0
 
 if (-not $IsDomainJoined) {
     Write-Item "DC Network Connectivity"  "N/A – machine is not domain-joined" "INFO"
+    $SectionStatus["4. Network Connectivity"] = "Skipped"
 } else {
     if (-not $script:DC) {
         # Fallback: resolve DC from DNS SRV record
@@ -517,9 +540,18 @@ if (-not $IsDomainJoined) {
             }
         }
 
-        # SMB / SYSVOL share availability
+        # SMB / SYSVOL share availability (with timeout protection)
+        $sysvolDC = $script:DC
         $sysvolResult = Measure-MSec {
-            Test-Path "\\$($script:DC)\SYSVOL" -ErrorAction SilentlyContinue
+            $testResult = Invoke-WithTimeout -Source "Section 4 - SYSVOL Test" -TimeoutSeconds 30 -Block {
+                Test-Path "\\$using:sysvolDC\SYSVOL" -ErrorAction SilentlyContinue
+            }
+            if ($null -eq $testResult) {
+                $section4Errors++
+                $false
+            } else {
+                $testResult
+            }
         }
         $sysvolStatus = if ($sysvolResult.Result) {
                             if ($sysvolResult.Ms -gt 3000) { "WARN" } else { "OK" }
@@ -527,9 +559,11 @@ if (-not $IsDomainJoined) {
         Write-Item "SYSVOL share reachable"  $(if ($sysvolResult.Result) { "Yes ($($sysvolResult.Ms) ms)" } else { "No" }) $sysvolStatus
         if (-not $sysvolResult.Result) {
             $DiagnosticSummary.Add("SYSVOL is not reachable. GPOs and logon scripts cannot be applied from $($script:DC).")
+            $section4Errors++
         }
     }
 }
+$SectionStatus["4. Network Connectivity"] = if ($SectionStatus["4. Network Connectivity"] -eq "Skipped") { "Skipped" } elseif ($section4Errors -gt 0) { "Partial" } else { "Completed" }
 
 # Network adapter info
 Write-Raw "`n  Network Adapters:"
