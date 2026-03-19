@@ -1051,6 +1051,28 @@ $SectionStatus["12. Error Log"] = "Completed"
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
 
+# ─── JSON Error Log Export ─────────────────────────────────────────────────
+$JsonPath = $OutputPath -replace '\.txt$', '_errors.json'
+try {
+    $jsonExport = [ordered]@{
+        metadata = [ordered]@{
+            timestamp     = $RunTime
+            hostname      = $env:COMPUTERNAME
+            psVersion     = $PSVersionTable.PSVersion.ToString()
+            psEdition     = if ($PSVersionTable.PSEdition) { $PSVersionTable.PSEdition } else { "Desktop" }
+            languageMode  = $ExecutionContext.SessionState.LanguageMode.ToString()
+            isAdmin       = $IsAdmin
+            isDomainJoined = $IsDomainJoined
+        }
+        sectionStatus = $SectionStatus
+        errors        = @($ErrorLog)
+    }
+    $jsonExport | ConvertTo-Json -Depth 4 | Out-File -FilePath $JsonPath -Encoding UTF8 -Force
+    Write-Host "JSON error log written to: $JsonPath" -ForegroundColor Green
+} catch {
+    Write-Host "Could not write JSON error log to ${JsonPath}: $_" -ForegroundColor Yellow
+}
+
 # ─── Encoding Cleanup ───────────────────────────────────────────────────────
 # Restore the user's original encoding settings so the script leaves no
 # side effects on the PowerShell session.
