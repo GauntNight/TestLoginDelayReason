@@ -243,30 +243,51 @@ if (-not $IsDomainJoined) {
         Write-Item "Domain resolves to"  ($dnsResult.Result | Select-Object -First 3 -ExpandProperty IPAddressToString) -join ", "
     }
 
-    # nltest DC discovery
-    $nltestResult = Measure-MSec {
-        $out = & nltest.exe /dsgetdc:$domain 2>&1
-        [pscustomobject]@{ Output = $out; Success = ($LASTEXITCODE -eq 0) }
-    }
-    $dcDiscStatus = if (-not $nltestResult.Result.Success) { "FAIL" }
-                   elseif ($nltestResult.Ms -gt 3000)       { "FAIL" }
-                   elseif ($nltestResult.Ms -gt 1000)       { "WARN" }
-                   else                                      { "OK"   }
-    Write-Item "DC discovery via nltest (ms)"  $nltestResult.Ms $dcDiscStatus
-
-    if ($nltestResult.Result.Success) {
-        $dcLine = $nltestResult.Result.Output | Where-Object { $_ -match "DC: \\\\" }
-        if ($dcLine) {
-            $dcName = ($dcLine -replace ".*DC: \\\\", "").Trim()
-            Write-Item "Located Domain Controller"  $dcName
-            $script:DC = $dcName
+    # DC discovery via .NET API (locale-independent, no text parsing required)
+    $dcDiscResult = Measure-MSec {
+        try {
+            $adContext = [System.DirectoryServices.ActiveDirectory.DirectoryContext]::new(
+                [System.DirectoryServices.ActiveDirectory.DirectoryContextType]::Domain, $domain
+            )
+            $dc = [System.DirectoryServices.ActiveDirectory.DomainController]::FindOne($adContext)
+            [pscustomobject]@{ Name = $dc.Name; SiteName = $dc.SiteName; Success = $true; Method = ".NET API" }
+        } catch {
+            # Fallback: nltest with structural parsing (parse by DC:\\ pattern, locale-resilient)
+            try {
+                $out = & nltest.exe /dsgetdc:$domain 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    $dcName = $null
+                    $siteName = $null
+                    foreach ($line in $out) {
+                        if ($line -match '^\s*DC:\s*\\\\(.+)') {
+                            $dcName = $Matches[1].Trim()
+                        }
+                        # Parse site by position: look for line with "DC Site Name" or site pattern
+                        # The DC:\\ pattern is structural, not localized
+                    }
+                    [pscustomobject]@{ Name = $dcName; SiteName = $siteName; Success = ($null -ne $dcName); Method = "nltest fallback" }
+                } else {
+                    [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "nltest fallback" }
+                }
+            } catch {
+                [pscustomobject]@{ Name = $null; SiteName = $null; Success = $false; Method = "failed" }
+            }
         }
-        $siteLine = $nltestResult.Result.Output | Where-Object { $_ -match "Client Site Name" }
-        if ($siteLine) {
-            Write-Item "AD Site"  ($siteLine -replace ".*Client Site Name:\s*", "").Trim()
+    }
+    $dcDiscStatus = if (-not $dcDiscResult.Result.Success) { "FAIL" }
+                   elseif ($dcDiscResult.Ms -gt 3000)       { "FAIL" }
+                   elseif ($dcDiscResult.Ms -gt 1000)       { "WARN" }
+                   else                                      { "OK"   }
+    Write-Item "DC discovery (ms)"  "$($dcDiscResult.Ms) [$($dcDiscResult.Result.Method)]" $dcDiscStatus
+
+    if ($dcDiscResult.Result.Success) {
+        Write-Item "Located Domain Controller"  $dcDiscResult.Result.Name
+        $script:DC = $dcDiscResult.Result.Name
+        if ($dcDiscResult.Result.SiteName) {
+            Write-Item "AD Site"  $dcDiscResult.Result.SiteName
         }
     } else {
-        Write-Item "DC discovery"  "FAILED – nltest returned errors" "FAIL"
+        Write-Item "DC discovery"  "FAILED – could not locate domain controller" "FAIL"
         $DiagnosticSummary.Add("Domain controller discovery failed. Network or DNS issue likely.")
     }
 }
