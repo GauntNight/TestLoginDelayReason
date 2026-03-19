@@ -80,6 +80,11 @@ function Write-ErrorLog {
     Write-Item -Label "$Source [$Category]" -Value $Message -Status $status
 }
 
+function Test-CommandAvailable {
+    param([string]$Name)
+    $null -ne (Get-Command -Name $Name -ErrorAction SilentlyContinue)
+}
+
 function Measure-MSec {
     param([scriptblock]$Block)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
