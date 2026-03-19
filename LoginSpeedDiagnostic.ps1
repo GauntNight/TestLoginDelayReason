@@ -65,7 +65,7 @@ function Write-Item {
     param([string]$Label, [string]$Value, [string]$Status = "INFO")
     $colors = @{ INFO = "White"; OK = "Green"; WARN = "Yellow"; FAIL = "Red" }
     $color  = if ($colors.ContainsKey($Status)) { $colors[$Status] } else { "White" }
-    $text   = "  [{0,-4}] {1,-40} {2}" -f $Status, $Label, $Value
+    $text   = "  [$(Format-FixedWidth $Status 4)] $(Format-FixedWidth $Label 40) $Value"
     $ReportLines.Add($text)
     Write-Host $text -ForegroundColor $color
     if ($Status -eq "WARN" -or $Status -eq "FAIL") {
@@ -349,7 +349,7 @@ if (-not $IsDomainJoined) {
 # Network adapter info
 Write-Raw "`n  Network Adapters:"
 Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | ForEach-Object {
-    Write-Raw ("    {0,-30} {1,-15} Link: {2}" -f $_.Name, $_.InterfaceDescription, $_.LinkSpeed)
+    Write-Raw ("    $(Format-FixedWidth $_.Name 30) $(Format-FixedWidth $_.InterfaceDescription 15) Link: $($_.LinkSpeed)")
 }
 
 # Time sync (W32TM) – clock skew breaks Kerberos (> 5 min = auth failure)
@@ -470,7 +470,7 @@ if (-not $IsAdmin) {
                 $user     = if ($userLine -match "Account Name:\s+(.+)") { $Matches[1].Trim() } else { "Unknown" }
                 $typeMatch = $_.Message -match "Logon Type:\s+(\d+)"
                 $ltype    = if ($typeMatch) { if ($Matches[1] -eq "10") { "Remote" } else { "Local" } } else { "" }
-                Write-Raw ("    {0}  User: {1,-30} {2}" -f $_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss"), $user, $ltype)
+                Write-Raw ("    $($_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))  User: $(Format-FixedWidth $user 30) $ltype")
             }
         } else {
             Write-Item "Logon Events"  "No interactive logons found in last 7 days" "WARN"
