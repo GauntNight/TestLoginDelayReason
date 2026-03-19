@@ -94,6 +94,38 @@ function Get-StatusByMs {
     return "FAIL"
 }
 
+function Get-DisplayWidth {
+    param([string]$Text)
+    $width = 0
+    foreach ($char in $Text.ToCharArray()) {
+        $cp = [int]$char
+        # CJK Unified Ideographs, Katakana, Hiragana, Fullwidth forms, etc.
+        if (($cp -ge 0x1100 -and $cp -le 0x115F) -or   # Hangul Jamo
+            ($cp -ge 0x2E80 -and $cp -le 0x9FFF) -or   # CJK ranges
+            ($cp -ge 0xAC00 -and $cp -le 0xD7AF) -or   # Hangul Syllables
+            ($cp -ge 0xF900 -and $cp -le 0xFAFF) -or   # CJK Compat Ideographs
+            ($cp -ge 0xFE30 -and $cp -le 0xFE6F) -or   # CJK Compat Forms
+            ($cp -ge 0xFF01 -and $cp -le 0xFF60) -or   # Fullwidth Forms
+            ($cp -ge 0xFFE0 -and $cp -le 0xFFE6)) {    # Fullwidth Signs
+            $width += 2
+        } else {
+            $width += 1
+        }
+    }
+    return $width
+}
+
+function Format-FixedWidth {
+    param([string]$Text, [int]$Width, [switch]$Right)
+    $displayWidth = Get-DisplayWidth $Text
+    $padding = [Math]::Max(0, $Width - $displayWidth)
+    if ($Right) {
+        return (' ' * $padding) + $Text
+    } else {
+        return $Text + (' ' * $padding)
+    }
+}
+
 # ─── Header ─────────────────────────────────────────────────────────────────
 
 $RunTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
