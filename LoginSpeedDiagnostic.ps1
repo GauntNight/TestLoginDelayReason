@@ -215,6 +215,53 @@ foreach ($t in $RequiredTypes) {
     }
 }
 
+# PowerShell version check
+$PSVer = $PSVersionTable.PSVersion
+Write-Item -Label "PowerShell Version" -Value "$($PSVer.Major).$($PSVer.Minor).$($PSVer.Build)" -Status $(if ($PSVer -ge [version]"5.1") { "OK" } else { "WARN" })
+if ($PSVer -lt [version]"5.1") {
+    Write-ErrorLog -Category "EnvironmentIssue" -Source "PSVersion" `
+        -Message "PowerShell $($PSVer) is below 5.1 – some cmdlets may be unavailable" `
+        -Remediation "Upgrade to PowerShell 5.1 or later. Visit https://aka.ms/wmf5download or install PowerShell 7+ from https://aka.ms/powershell"
+}
+
+# Language mode detection
+$LanguageMode = $ExecutionContext.SessionState.LanguageMode
+$langStatus = if ($LanguageMode -eq "FullLanguage") { "OK" } else { "WARN" }
+Write-Item -Label "Language Mode" -Value $LanguageMode -Status $langStatus
+if ($LanguageMode -ne "FullLanguage") {
+    Write-ErrorLog -Category "EnvironmentIssue" -Source "LanguageMode" `
+        -Message "Running in $LanguageMode mode – some diagnostics may be restricted" `
+        -Remediation "ConstrainedLanguage mode limits .NET type access. Run from a FullLanguage session or adjust Device Guard / AppLocker policies."
+}
+
+# Execution policy reporting
+$ExecPolicy = Get-ExecutionPolicy
+Write-Item -Label "Execution Policy" -Value $ExecPolicy -Status "INFO"
+
+# PowerShell module availability checks
+$RequiredModules = @(
+    @{ Name = "ActiveDirectory";  Purpose = "AD user and group lookups" }
+    @{ Name = "GroupPolicy";      Purpose = "GPO enumeration and analysis" }
+    @{ Name = "DnsClient";        Purpose = "DNS diagnostics" }
+    @{ Name = "NetAdapter";       Purpose = "Network adapter information" }
+    @{ Name = "NetTCPIP";         Purpose = "TCP/IP configuration" }
+    @{ Name = "BitsTransfer";     Purpose = "Background transfer diagnostics" }
+    @{ Name = "ScheduledTasks";   Purpose = "Scheduled task analysis" }
+)
+
+$ModuleAvailability = @{}
+foreach ($m in $RequiredModules) {
+    $available = Test-ModuleAvailable -ModuleName $m.Name
+    $ModuleAvailability[$m.Name] = $available
+    if ($available) {
+        Write-Item -Label "Module: $($m.Name)" -Value "Available" -Status "OK"
+    } else {
+        Write-ErrorLog -Category "MissingModule" -Source $m.Name `
+            -Message "Module '$($m.Name)' not available – $($m.Purpose) may be limited" `
+            -Remediation "Install the '$($m.Name)' module via 'Install-Module $($m.Name)' or enable the corresponding Windows feature (e.g., RSAT for ActiveDirectory/GroupPolicy)."
+    }
+}
+
 Write-Item -Label "Pre-flight checks" -Value "Complete" -Status "INFO"
 
 # ═══════════════════════════════════════════════════════════════════════════
