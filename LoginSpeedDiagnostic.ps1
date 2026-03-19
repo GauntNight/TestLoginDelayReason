@@ -268,14 +268,26 @@ Write-Item -Label "Pre-flight checks" -Value "Complete" -Status "INFO"
 # SECTION 1 – SYSTEM INFORMATION
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "1. SYSTEM INFORMATION"
+$SectionStatus["1. System Information"] = "In Progress"
 
-$cs   = Get-CimInstance Win32_ComputerSystem
-$os   = Get-CimInstance Win32_OperatingSystem
-$bios = Get-CimInstance Win32_BIOS
+try {
+    $cs   = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+    $os   = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+    $bios = Get-CimInstance Win32_BIOS -ErrorAction Stop
+} catch {
+    Write-ErrorLog -Category "OperationError" -Source "Section 1 - System Information" `
+        -Message "Failed to retrieve system information via CIM: $($_.Exception.Message)" `
+        -Remediation "Ensure the WMI/CIM service (winmgmt) is running. Try restarting it with: Restart-Service winmgmt -Force"
+    # Fallback values so downstream sections can continue
+    if (-not $cs)   { $cs   = [pscustomobject]@{ Domain = $env:USERDOMAIN; PartOfDomain = $false; Manufacturer = "Unknown"; Model = "Unknown"; TotalPhysicalMemory = 0; NumberOfLogicalProcessors = 0 } }
+    if (-not $os)   { $os   = [pscustomobject]@{ Caption = "Unknown"; Version = "Unknown"; LastBootUpTime = Get-Date; FreePhysicalMemory = 0 } }
+    if (-not $bios) { $bios = [pscustomobject]@{ SMBIOSBIOSVersion = "Unknown" } }
+}
+
+$IsDomainJoined = if ($cs.PSObject.Properties['PartOfDomain']) { $cs.PartOfDomain } else { $false }
 
 Write-Item "Hostname"         $env:COMPUTERNAME
 Write-Item "Domain"           $cs.Domain
-$IsDomainJoined = $cs.PartOfDomain
 Write-Item "Workgroup/Domain" $(if ($IsDomainJoined) { "Domain joined" } else { "NOT domain joined – AD sections will show N/A" }) `
            $(if ($IsDomainJoined) { "OK" } else { "WARN" })
 Write-Item "Running as Admin"  $(if ($IsAdmin) { "Yes – full data collection" } else { "No – some sections require elevation" }) `
@@ -290,27 +302,47 @@ Write-Item "Architecture"     $env:PROCESSOR_ARCHITECTURE
 Write-Item "Manufacturer"     $cs.Manufacturer
 Write-Item "Model"            $cs.Model
 Write-Item "BIOS Version"     $bios.SMBIOSBIOSVersion
-Write-Item "Total RAM (GB)"   ([math]::Round($cs.TotalPhysicalMemory / 1GB, 1))
-Write-Item "Logical CPUs"     $cs.NumberOfLogicalProcessors
+Write-Item "Total RAM (GB)"   $(if ($cs.TotalPhysicalMemory -gt 0) { [math]::Round($cs.TotalPhysicalMemory / 1GB, 1) } else { "Unknown" })
+Write-Item "Logical CPUs"     $(if ($cs.NumberOfLogicalProcessors -gt 0) { $cs.NumberOfLogicalProcessors } else { "Unknown" })
 Write-Item "Last Boot"        $os.LastBootUpTime
-Write-Item "Uptime (hrs)"     ([math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1))
+Write-Item "Uptime (hrs)"     $(try { [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1) } catch { "Unknown" })
+
+$SectionStatus["1. System Information"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 1*" }) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 2 – LOCAL DEVICE PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════════
 Write-Section "2. LOCAL DEVICE PERFORMANCE"
+$SectionStatus["2. Local Device Performance"] = "In Progress"
+$section2Errors = 0
 
 # CPU load
-$cpuLoad = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average
-$cpuStatus = if ($cpuLoad -gt 80) { "WARN" } elseif ($cpuLoad -gt 90) { "FAIL" } else { "OK" }
-Write-Item "Current CPU Load %" $cpuLoad $cpuStatus
+try {
+    $cpuLoad = (Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object -Property LoadPercentage -Average).Average
+    $cpuStatus = if ($cpuLoad -gt 80) { "WARN" } elseif ($cpuLoad -gt 90) { "FAIL" } else { "OK" }
+    Write-Item "Current CPU Load %" $cpuLoad $cpuStatus
+} catch {
+    $section2Errors++
+    Write-ErrorLog -Category "OperationError" -Source "Section 2 - CPU Load" `
+        -Message "Failed to retrieve CPU load via CIM: $($_.Exception.Message)" `
+        -Remediation "Ensure the WMI/CIM service (winmgmt) is running and Win32_Processor class is accessible."
+}
 
 # RAM available
-$ramAvailGB = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
-$ramPctFree = [math]::Round(($os.FreePhysicalMemory / ($cs.TotalPhysicalMemory / 1KB)) * 100, 1)
-$ramStatus  = if ($ramPctFree -lt 10) { "FAIL" } elseif ($ramPctFree -lt 20) { "WARN" } else { "OK" }
-Write-Item "Free RAM (GB)"   $ramAvailGB $ramStatus
-Write-Item "Free RAM %"      "$ramPctFree %" $ramStatus
+try {
+    $ramAvailGB = [math]::Round($os.FreePhysicalMemory / 1MB, 2)
+    $ramPctFree = if ($cs.TotalPhysicalMemory -gt 0) {
+        [math]::Round(($os.FreePhysicalMemory / ($cs.TotalPhysicalMemory / 1KB)) * 100, 1)
+    } else { 0 }
+    $ramStatus  = if ($ramPctFree -lt 10) { "FAIL" } elseif ($ramPctFree -lt 20) { "WARN" } else { "OK" }
+    Write-Item "Free RAM (GB)"   $ramAvailGB $ramStatus
+    Write-Item "Free RAM %"      "$ramPctFree %" $ramStatus
+} catch {
+    $section2Errors++
+    Write-ErrorLog -Category "OperationError" -Source "Section 2 - RAM" `
+        -Message "Failed to calculate RAM availability: $($_.Exception.Message)" `
+        -Remediation "This may occur if System Information (Section 1) failed to retrieve OS/computer data."
+}
 
 # System drive
 $sysDrive = Split-Path $env:SystemRoot -Qualifier
@@ -340,11 +372,17 @@ if ($pf) {
 }
 
 # Time since last boot (very fresh boot can be slow while services settle)
-$uptimeHrs = ((Get-Date) - $os.LastBootUpTime).TotalHours
-if ($uptimeHrs -lt 0.1) {
-    Write-Item "Boot freshness"  "Device just booted – services still initialising" "WARN"
-    $DiagnosticSummary.Add("Device booted very recently; background services may still be initialising.")
+try {
+    $uptimeHrs = ((Get-Date) - $os.LastBootUpTime).TotalHours
+    if ($uptimeHrs -lt 0.1) {
+        Write-Item "Boot freshness"  "Device just booted – services still initialising" "WARN"
+        $DiagnosticSummary.Add("Device booted very recently; background services may still be initialising.")
+    }
+} catch {
+    # Non-critical; skip boot freshness check if LastBootUpTime is invalid
 }
+
+$SectionStatus["2. Local Device Performance"] = if ($section2Errors -gt 0) { "Partial" } else { "Completed" }
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 3 – DNS AND DOMAIN CONTROLLER DISCOVERY
