@@ -433,17 +433,23 @@ try {
     }
 
     # Identify slow CSEs (Client-Side Extensions) – Event IDs 4016 / 5016
+    # Use structured XML access instead of Message parsing (locale-independent)
     Write-Raw "`n  Slow Group Policy CSEs (> 10 seconds):"
     $cseEvents = $gpLog | Where-Object { $_.Id -in @(5016, 4016) }
     $slowCses  = $cseEvents | Where-Object {
-        ($_.Message -match "(\d+) milliseconds" -and [int]($Matches[1]) -gt 10000)
+        $xml = [xml]$_.ToXml()
+        $dataNodes = $xml.Event.EventData.Data
+        $elapsed = ($dataNodes | Where-Object { $_.Name -eq 'CSEElaspedTimeInMilliSeconds' }).'#text'
+        $elapsed -and [int]$elapsed -gt 10000
     }
     if ($slowCses.Count -gt 0) {
         $slowCses | Select-Object -First 10 | ForEach-Object {
-            $ms  = if ($_.Message -match "(\d+) milliseconds") { $Matches[1] } else { "?" }
-            $cse = if ($_.Message -match "CSE named (.+?) \(") { $Matches[1] } `
-                   elseif ($_.Message -match "for (.+?) in") { $Matches[1] } `
-                   else { "Unknown CSE" }
+            $xml = [xml]$_.ToXml()
+            $dataNodes = $xml.Event.EventData.Data
+            $ms  = ($dataNodes | Where-Object { $_.Name -eq 'CSEElaspedTimeInMilliSeconds' }).'#text'
+            if (-not $ms) { $ms = "?" }
+            $cse = ($dataNodes | Where-Object { $_.Name -eq 'CSEExtensionName' }).'#text'
+            if (-not $cse) { $cse = "Unknown CSE" }
             Write-Item "  Slow CSE" "$cse – $ms ms" "WARN"
         }
     } else {
