@@ -733,3 +733,10 @@ Write-Raw @"
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
+
+# ─── Encoding Cleanup ───────────────────────────────────────────────────────
+# Restore the user's original encoding settings so the script leaves no
+# side effects on the PowerShell session.
+
+[Console]::OutputEncoding = $OriginalConsoleOutputEncoding
+$OutputEncoding           = $OriginalOutputEncoding
