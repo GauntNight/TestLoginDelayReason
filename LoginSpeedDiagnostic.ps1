@@ -416,7 +416,9 @@ try {
             $gpStatus   = if ($durationMs -gt 120000) { "FAIL" } `
                           elseif ($durationMs -gt 60000) { "WARN" } `
                           else { "OK" }
-            $isUser = $start.Message -match "user" -or $start.Properties[0].Value -match "user"
+            # Properties[0] = IsMachine (boolean/int): 1 = Computer, 0 = User
+            $isMachine = [bool]([int]$start.Properties[0].Value)
+            $isUser = -not $isMachine
             $type   = if ($isUser) { "User GP " } else { "Computer GP" }
             Write-Item "$type session $(($matched+1)) – $($start.TimeCreated.ToString('MM-dd HH:mm'))" `
                        ("{0:N0} ms ({1:N1} sec)" -f $durationMs, ($durationMs / 1000)) $gpStatus
