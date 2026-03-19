@@ -49,6 +49,8 @@ $PSDefaultParameterValues['Add-Content:Encoding']   = 'utf8'
 $ReportLines = [System.Collections.Generic.List[string]]::new()
 $DiagnosticSummary = [System.Collections.Generic.List[string]]::new()
 $Warnings = [System.Collections.Generic.List[string]]::new()
+$ErrorLog = [System.Collections.Generic.List[PSCustomObject]]::new()
+$SectionStatus = [ordered]@{}
 
 $IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
@@ -77,6 +79,26 @@ function Write-Raw {
     param([string]$Text)
     $ReportLines.Add($Text)
     Write-Host $Text
+}
+
+function Write-ErrorLog {
+    param(
+        [ValidateSet("MissingCommand","MissingModule","MissingType","SecurityFailure","OperationError","EnvironmentIssue","TimeoutError")]
+        [string]$Category,
+        [string]$Source,
+        [string]$Message,
+        [string]$Remediation
+    )
+    $entry = [pscustomobject]@{
+        Timestamp   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Category    = $Category
+        Source      = $Source
+        Message     = $Message
+        Remediation = $Remediation
+    }
+    $ErrorLog.Add($entry)
+    $status = if ($Category -eq "SecurityFailure" -or $Category -eq "EnvironmentIssue") { "FAIL" } else { "WARN" }
+    Write-Item -Label "$Source [$Category]" -Value $Message -Status $status
 }
 
 function Measure-MSec {
