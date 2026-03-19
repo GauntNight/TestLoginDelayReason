@@ -460,6 +460,11 @@ try {
         Write-Item "  Slow CSEs" "None detected (all CSEs < 10 sec)" "OK"
     }
 } catch {
+    if ($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.Message -match 'access denied|Access is denied') {
+        Write-ErrorLog -Category "SecurityFailure" -Source "Section 5 - GP Event Log" -Message "Access denied reading GP operational log. Remediation: Run as administrator for GP timing data."
+    } else {
+        Write-ErrorLog -Category "OperationError" -Source "Section 5 - GP Event Log" -Message $_.Exception.Message
+    }
     Write-Item "GP Event Log"  "Could not read Group Policy operational log: $_" "WARN"
 }
 
@@ -513,6 +518,11 @@ if (-not $IsAdmin) {
             Write-Item "Logon Events"  "No interactive logons found in last 7 days" "WARN"
         }
     } catch {
+        if ($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.Message -match 'access denied|Access is denied') {
+            Write-ErrorLog -Category "SecurityFailure" -Source "Section 6 - Security Event Log" -Message "Access denied reading Security event log. Remediation: Run as administrator for logon event data."
+        } else {
+            Write-ErrorLog -Category "OperationError" -Source "Section 6 - Security Event Log" -Message $_.Exception.Message
+        }
         Write-Item "Security Log"  "Could not read Security event log: $_" "WARN"
     }
 }
@@ -637,6 +647,11 @@ try {
         Write-Item "Winlogon events"  "No start/end pairs found (events 811/812)" "INFO"
     }
 } catch {
+    if ($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.Message -match 'access denied|Access is denied') {
+        Write-ErrorLog -Category "SecurityFailure" -Source "Section 9 - Winlogon" -Message "Access denied reading Winlogon operational log. Remediation: Run as administrator for Winlogon timing data."
+    } else {
+        Write-ErrorLog -Category "OperationError" -Source "Section 9 - Winlogon" -Message $_.Exception.Message
+    }
     Write-Item "Winlogon Log"  "Could not read Winlogon operational log: $_" "INFO"
 }
 
