@@ -1,4 +1,4 @@
-# Run as administrator for full data collection.
+﻿# Run as administrator for full data collection.
 # When run as a standard user, AD-dependent and privileged sections are skipped gracefully.
 <#
 .SYNOPSIS
