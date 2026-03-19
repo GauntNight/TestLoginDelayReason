@@ -500,22 +500,30 @@ if (-not $IsAdmin) {
 } else {
     try {
         # Event 4624 Type 2 = Interactive logon, Type 10 = RemoteInteractive
+        # Use structured XML access instead of Message text matching (locale-independent)
         $logonEvents = Get-WinEvent -FilterHashtable @{
             LogName   = "Security"
             Id        = 4624
             StartTime = (Get-Date).AddDays(-7)
         } -MaxEvents 500 -ErrorAction Stop |
-            Where-Object { $_.Message -match "Logon Type:\s+(2|10)\b" } |
+            Where-Object {
+                $xml = [xml]$_.ToXml()
+                $dataNodes = $xml.Event.EventData.Data
+                $logonType = ($dataNodes | Where-Object { $_.Name -eq 'LogonType' }).'#text'
+                $logonType -eq '2' -or $logonType -eq '10'
+            } |
             Sort-Object TimeCreated -Descending |
             Select-Object -First 10
 
         if ($logonEvents.Count -gt 0) {
             Write-Raw "  Last $($logonEvents.Count) interactive logon events:"
             $logonEvents | ForEach-Object {
-                $userLine = $_.Message -split "`n" | Where-Object { $_ -match "Account Name:\s+\S" } | Select-Object -First 1
-                $user     = if ($userLine -match "Account Name:\s+(.+)") { $Matches[1].Trim() } else { "Unknown" }
-                $typeMatch = $_.Message -match "Logon Type:\s+(\d+)"
-                $ltype    = if ($typeMatch) { if ($Matches[1] -eq "10") { "Remote" } else { "Local" } } else { "" }
+                $xml = [xml]$_.ToXml()
+                $dataNodes = $xml.Event.EventData.Data
+                $user      = ($dataNodes | Where-Object { $_.Name -eq 'TargetUserName' }).'#text'
+                if (-not $user) { $user = "Unknown" }
+                $logonType = ($dataNodes | Where-Object { $_.Name -eq 'LogonType' }).'#text'
+                $ltype     = if ($logonType -eq '10') { "Remote" } else { "Local" }
                 Write-Raw ("    $($_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'))  User: $(Format-FixedWidth $user 30) $ltype")
             }
         } else {
