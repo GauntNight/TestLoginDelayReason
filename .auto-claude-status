@@ -1,15 +1,15 @@
 {
   "active": true,
-  "spec": "001-create-login-flow-ui-diagnosis",
-  "state": "complete",
+  "spec": "003-fix-powershell-unicode-handling-for-localization",
+  "state": "building",
   "subtasks": {
-    "completed": 6,
-    "total": 6,
-    "in_progress": 0,
+    "completed": 14,
+    "total": 15,
+    "in_progress": 1,
     "failed": 0
   },
   "phase": {
-    "current": "Interactive Features & Polish",
+    "current": "Integration Verification",
     "id": null,
     "total": 2
   },
@@ -18,8 +18,8 @@
     "max": 1
   },
   "session": {
-    "number": 6,
-    "started_at": "2026-03-18T16:59:06.040378"
+    "number": 15,
+    "started_at": "2026-03-19T09:15:20.469835"
   },
-  "last_update": "2026-03-18T17:17:55.122637"
+  "last_update": "2026-03-19T09:33:25.678857"
 }
