@@ -741,6 +741,32 @@ Write-Raw @"
   ──────────────────────────────────────────────────────────────────────
 "@
 
+# ═══════════════════════════════════════════════════════════════════════════
+# SECTION 12 – ERROR LOG
+# ═══════════════════════════════════════════════════════════════════════════
+Write-Section "12. ERROR LOG"
+
+if ($ErrorLog.Count -eq 0) {
+    Write-Item "Error Log" "No errors captured during diagnostic run." "OK"
+} else {
+    # Group errors by category and display counts
+    $grouped = $ErrorLog | Group-Object -Property Category
+    Write-Raw "  Error counts by category:"
+    foreach ($group in $grouped) {
+        Write-Raw "    $($group.Name): $($group.Count)"
+    }
+    Write-Raw ""
+
+    # Display each error entry with timestamp
+    foreach ($entry in $ErrorLog) {
+        $status = if ($entry.Category -eq "SecurityFailure") { "FAIL" } else { "WARN" }
+        Write-Item "[$($entry.Category)] $($entry.Source)" "$($entry.Message) (at $($entry.Timestamp))" $status
+    }
+
+    Write-Raw ""
+    Write-Item "Total errors" "$($ErrorLog.Count) error(s) captured during diagnostic run" "WARN"
+}
+
 # ─── Save Report ────────────────────────────────────────────────────────────
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
