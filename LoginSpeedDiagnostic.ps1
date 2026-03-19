@@ -26,6 +26,24 @@ param(
     [string]$OutputPath = ".\LoginSpeedReport.txt"
 )
 
+# ─── Encoding ────────────────────────────────────────────────────────────────
+# External commands output in the system's OEM codepage (e.g., 932/Shift-JIS on
+# Japanese Windows). Setting OutputEncoding to UTF-8 combined with chcp 65001
+# ensures correct decoding. For commands that ignore chcp, we use structured
+# alternatives (APIs, XML output) instead of text parsing.
+
+$OriginalConsoleOutputEncoding = [Console]::OutputEncoding
+$OriginalOutputEncoding        = $OutputEncoding
+
+try { chcp 65001 | Out-Null } catch {}   # Ask console to use UTF-8 code page
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::InputEncoding  = [System.Text.Encoding]::UTF8
+$OutputEncoding           = [System.Text.Encoding]::UTF8
+
+$PSDefaultParameterValues['Out-File:Encoding']     = 'utf8'
+$PSDefaultParameterValues['Set-Content:Encoding']   = 'utf8'
+$PSDefaultParameterValues['Add-Content:Encoding']   = 'utf8'
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 $ReportLines = [System.Collections.Generic.List[string]]::new()
