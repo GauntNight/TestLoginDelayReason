@@ -523,7 +523,10 @@ $profiles | Select-Object -First 10 | ForEach-Object {
         $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
                       Measure-Object Length -Sum).Sum
         $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
-    } catch {}
+    } catch {
+        Write-ErrorLog -Category "OperationError" -Source "Section 7 - Profile Size" -Message $_.Exception.Message
+        $sizeGB = "Error"
+    }
     $isRoaming = $_.RoamingConfigured
     $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
     Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
@@ -571,7 +574,12 @@ foreach ($key in $runKeys) {
         $kname = $key -replace ".*\\", ""
         $status = if ($count -gt 15) { "WARN" } else { "OK" }
         Write-Item "Startup entries ($kname)" $count $status
-    } catch {}
+    } catch {
+        $errCategory = if ($_.Exception -is [System.UnauthorizedAccessException] -or $_.Exception.Message -match 'access.denied|unauthorized') { "SecurityFailure" } else { "OperationError" }
+        Write-ErrorLog -Category $errCategory -Source "Section 8 - Startup Entries" -Message $_.Exception.Message
+        $kname = $key -replace ".*\\", ""
+        Write-Item "Startup entries ($kname)" "Could not read: $($_.Exception.Message)" "WARN"
+    }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
