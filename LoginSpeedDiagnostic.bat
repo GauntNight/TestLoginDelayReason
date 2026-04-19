@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 :: ============================================================
 :: LoginSpeedDiagnostic.bat
 :: Launcher for the AD Login Speed Diagnostic tool.
@@ -26,13 +27,13 @@ if %errorlevel% neq 0 (
 echo Checking PowerShell environment...
 for /f "usebackq delims=" %%V in (`powershell.exe -NoProfile -Command "$PSVersionTable.PSVersion.ToString()" 2^>nul`) do set "PS_VER=%%V"
 if defined PS_VER (
-    echo   PowerShell version: %PS_VER%
-    :: Warn if version is below 5.1
-    for /f "tokens=1,2 delims=." %%A in ("%PS_VER%") do (
+    echo   PowerShell version: !PS_VER!
+    REM Warn if version is below 5.1
+    for /f "tokens=1,2 delims=." %%A in ("!PS_VER!") do (
         if %%A LSS 5 (
-            echo   WARNING: PowerShell version %PS_VER% is below 5.1. Some diagnostics may not work correctly.
+            echo   WARNING: PowerShell version !PS_VER! is below 5.1. Some diagnostics may not work correctly.
         ) else if %%A EQU 5 if %%B LSS 1 (
-            echo   WARNING: PowerShell version %PS_VER% is below 5.1. Some diagnostics may not work correctly.
+            echo   WARNING: PowerShell version !PS_VER! is below 5.1. Some diagnostics may not work correctly.
         )
     )
 ) else (
@@ -41,7 +42,7 @@ if defined PS_VER (
 
 :: Check critical cmdlet availability (Get-CimInstance from CimCmdlets)
 for /f "usebackq delims=" %%R in (`powershell.exe -NoProfile -Command "if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) { 'Available' } else { 'Missing' }" 2^>nul`) do set "CIM_STATUS=%%R"
-if /i "%CIM_STATUS%"=="Available" (
+if /i "!CIM_STATUS!"=="Available" (
     echo   Get-CimInstance: Available
 ) else (
     echo   WARNING: Get-CimInstance cmdlet not available. WMI-based diagnostics may fail.
@@ -50,9 +51,9 @@ if /i "%CIM_STATUS%"=="Available" (
 :: Language mode check
 for /f "usebackq delims=" %%L in (`powershell.exe -NoProfile -Command "$ExecutionContext.SessionState.LanguageMode" 2^>nul`) do set "LANG_MODE=%%L"
 if defined LANG_MODE (
-    echo   Language mode: %LANG_MODE%
-    if /i not "%LANG_MODE%"=="FullLanguage" (
-        echo   WARNING: PowerShell is running in %LANG_MODE% mode. Some diagnostics may be restricted.
+    echo   Language mode: !LANG_MODE!
+    if /i not "!LANG_MODE!"=="FullLanguage" (
+        echo   WARNING: PowerShell is running in !LANG_MODE! mode. Some diagnostics may be restricted.
     )
 ) else (
     echo   WARNING: Could not detect PowerShell language mode.
@@ -66,7 +67,7 @@ set "SCRIPT_DIR=%~dp0"
 set "PS_SCRIPT=%SCRIPT_DIR%LoginSpeedDiagnostic.ps1"
 
 if not exist "%PS_SCRIPT%" (
-    echo ERROR: LoginSpeedDiagnostic.ps1 not found in %SCRIPT_DIR%
+    echo ERROR: LoginSpeedDiagnostic.ps1 not found in "!SCRIPT_DIR!"
     pause
     exit /b 1
 )
