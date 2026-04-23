@@ -654,6 +654,329 @@ function Get-HtmlTemplate {
       color: var(--color-ok);
       font-weight: 600;
     }
+
+    /* ========================================
+       Print Styles
+       ======================================== */
+    @media print {
+      /* Base print styles */
+      body {
+        background: #ffffff;
+        color: #000000;
+        font-size: 11pt;
+        line-height: 1.5;
+      }
+
+      /* Header and footer */
+      .header {
+        box-shadow: none;
+        border-bottom: 2px solid #000000;
+        padding: 0.5cm 1cm;
+        margin-bottom: 0.5cm;
+      }
+
+      .header h1 {
+        color: #000000;
+        font-size: 18pt;
+      }
+
+      .header .subtitle {
+        font-size: 10pt;
+        color: #333333;
+      }
+
+      .footer {
+        border-top: 1px solid #000000;
+        padding: 0.25cm 0;
+        font-size: 9pt;
+        break-before: auto;
+      }
+
+      /* Container adjustments */
+      .container {
+        max-width: 100%;
+        padding: 0.5cm 1cm;
+      }
+
+      /* Hide interactive elements */
+      .expand-collapse-all {
+        display: none !important;
+      }
+
+      .btn {
+        display: none !important;
+      }
+
+      /* Executive summary */
+      .executive-summary {
+        background: #ffffff;
+        border: 2px solid #000000;
+        box-shadow: none;
+        padding: 0.5cm;
+        margin-bottom: 0.5cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .executive-summary h2 {
+        font-size: 14pt;
+        color: #000000;
+        border-bottom-color: #000000;
+        margin-bottom: 0.3cm;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 0.3cm;
+      }
+
+      .summary-card {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        padding: 0.3cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .summary-card h3 {
+        font-size: 9pt;
+        color: #666666;
+      }
+
+      .health-score {
+        font-size: 24pt;
+      }
+
+      .health-excellent,
+      .health-good,
+      .health-fair,
+      .health-poor {
+        color: #000000;
+      }
+
+      .stat-item {
+        background-color: #f5f5f5;
+        padding: 0.15cm 0.2cm;
+      }
+
+      .stat-label {
+        font-size: 9pt;
+        color: #666666;
+      }
+
+      .stat-value {
+        font-size: 11pt;
+        color: #000000;
+      }
+
+      /* Top issues section */
+      .top-issues {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        padding: 0.3cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .top-issues h3 {
+        font-size: 9pt;
+        color: #666666;
+      }
+
+      .issue-item {
+        background-color: #f5f5f5;
+        border-left-color: #666666;
+        margin-bottom: 0.2cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .issue-number {
+        background-color: #666666;
+      }
+
+      .issue-text {
+        font-size: 9pt;
+      }
+
+      .no-issues {
+        background-color: #f0f0f0;
+        border-left-color: #666666;
+        color: #000000;
+      }
+
+      /* Section styles */
+      .section {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        margin-bottom: 0.4cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .section.severity-ok {
+        border-left: 3px solid #666666;
+      }
+
+      .section.severity-warn {
+        border-left: 3px solid #333333;
+      }
+
+      .section.severity-fail {
+        border-left: 3px solid #000000;
+        border-left-width: 4px;
+      }
+
+      .section.severity-info {
+        border-left: 3px solid #999999;
+      }
+
+      /* Force all sections to be expanded in print */
+      .section.collapsed .section-content {
+        max-height: none !important;
+        padding: 0 0.4cm 0.4cm 0.4cm !important;
+      }
+
+      .section-header {
+        padding: 0.3cm 0.4cm;
+        cursor: default;
+        background-color: #ffffff;
+      }
+
+      .section-header:hover {
+        background-color: #ffffff;
+      }
+
+      .section-title {
+        font-size: 12pt;
+        color: #000000;
+      }
+
+      /* Hide toggle icons in print */
+      .toggle-icon {
+        display: none !important;
+      }
+
+      .section-content {
+        padding: 0 0.4cm 0.4cm 0.4cm;
+      }
+
+      /* Severity badges */
+      .severity-badge {
+        font-size: 8pt;
+        padding: 0.1cm 0.2cm;
+      }
+
+      .severity-badge.ok {
+        background-color: #e0e0e0;
+        color: #000000;
+      }
+
+      .severity-badge.warn {
+        background-color: #d0d0d0;
+        color: #000000;
+        border: 1px solid #999999;
+      }
+
+      .severity-badge.fail {
+        background-color: #c0c0c0;
+        color: #000000;
+        border: 1px solid #666666;
+      }
+
+      .severity-badge.info {
+        background-color: #e8e8e8;
+        color: #000000;
+      }
+
+      /* Item rows */
+      .item {
+        padding: 0.2cm 0;
+        border-bottom: 1px solid #dddddd;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .item-label {
+        font-size: 10pt;
+        color: #000000;
+      }
+
+      .item-value {
+        font-size: 10pt;
+        color: #333333;
+      }
+
+      .item-status {
+        font-size: 9pt;
+      }
+
+      .status-ok {
+        background-color: #e0e0e0;
+        color: #000000;
+      }
+
+      .status-warn {
+        background-color: #d0d0d0;
+        color: #000000;
+        border: 1px solid #999999;
+      }
+
+      .status-fail {
+        background-color: #c0c0c0;
+        color: #000000;
+        border: 1px solid #666666;
+      }
+
+      .status-info {
+        background-color: #e8e8e8;
+        color: #000000;
+      }
+
+      /* Summary and error boxes */
+      .summary-box {
+        background-color: #f5f5f5;
+        border-left-color: #666666;
+        padding: 0.3cm;
+        margin-bottom: 0.3cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .summary-box ul {
+        margin-left: 0.5cm;
+      }
+
+      .error-log {
+        background-color: #f5f5f5;
+        border-left-color: #333333;
+        padding: 0.3cm;
+        font-size: 9pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      /* Code blocks */
+      pre {
+        background-color: #f8f8f8;
+        border: 1px solid #cccccc;
+        padding: 0.2cm;
+        font-size: 9pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      /* Ensure good page breaks */
+      h1, h2, h3, h4, h5, h6 {
+        break-after: avoid;
+        page-break-after: avoid;
+      }
+
+      /* Remove unnecessary margins for print density */
+      * {
+        box-shadow: none !important;
+      }
+    }
   </style>
 </head>
 <body>
