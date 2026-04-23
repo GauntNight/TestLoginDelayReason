@@ -17,13 +17,23 @@
 .PARAMETER OutputPath
     Path to write the report file. Defaults to .\LoginSpeedReport.txt
 
+.PARAMETER Quick
+    Run in quick mode, skipping time-intensive checks
+
+.PARAMETER Sections
+    Specific sections to run. If omitted, all sections are run.
+
 .EXAMPLE
     .\LoginSpeedDiagnostic.ps1
     .\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp\MyReport.txt"
+    .\LoginSpeedDiagnostic.ps1 -Quick
+    .\LoginSpeedDiagnostic.ps1 -Sections "System","Network"
 #>
 
 param(
-    [string]$OutputPath = ".\LoginSpeedReport.txt"
+    [string]$OutputPath = ".\LoginSpeedReport.txt",
+    [switch]$Quick,
+    [string[]]$Sections
 )
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
