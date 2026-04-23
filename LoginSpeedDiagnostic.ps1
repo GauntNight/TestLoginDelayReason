@@ -377,6 +377,145 @@ function Get-HtmlTemplate {
       overflow-x: auto;
       margin-top: 0.5rem;
     }
+    .executive-summary {
+      background: linear-gradient(135deg, var(--color-surface) 0%, #f0f4f8 100%);
+      border: 2px solid var(--color-border);
+      border-radius: 0.75rem;
+      padding: 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+    }
+    .executive-summary h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--color-text);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 3px solid var(--color-primary);
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .summary-card {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 0.5rem;
+      padding: 1.25rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    .summary-card h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      margin-bottom: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .health-score {
+      font-size: 3rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+    .health-excellent {
+      color: var(--color-ok);
+    }
+    .health-good {
+      color: #22c55e;
+    }
+    .health-fair {
+      color: var(--color-warn);
+    }
+    .health-poor {
+      color: var(--color-fail);
+    }
+    .health-label {
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.75rem;
+    }
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background-color: var(--color-bg);
+      border-radius: 0.375rem;
+    }
+    .stat-label {
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+    }
+    .stat-value {
+      font-size: 1.125rem;
+      font-weight: 700;
+    }
+    .top-issues {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 0.5rem;
+      padding: 1.25rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    .top-issues h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .issue-item {
+      display: flex;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      margin-bottom: 0.75rem;
+      background-color: var(--color-fail-bg);
+      border-left: 4px solid var(--color-fail);
+      border-radius: 0.375rem;
+    }
+    .issue-item:last-child {
+      margin-bottom: 0;
+    }
+    .issue-number {
+      flex-shrink: 0;
+      width: 1.75rem;
+      height: 1.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--color-fail);
+      color: white;
+      border-radius: 50%;
+      font-weight: 700;
+      font-size: 0.875rem;
+    }
+    .issue-text {
+      flex: 1;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: var(--color-text);
+    }
+    .no-issues {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem;
+      background-color: var(--color-ok-bg);
+      border-left: 4px solid var(--color-ok);
+      border-radius: 0.375rem;
+      color: var(--color-ok);
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -396,11 +535,138 @@ function Get-HtmlTemplate {
 '@
 }
 
+function New-ExecutiveSummary {
+    param(
+        [System.Collections.Generic.List[string]]$ReportLines,
+        [System.Collections.Generic.List[string]]$DiagnosticSummary,
+        [System.Collections.Generic.List[string]]$Warnings,
+        [System.Collections.Generic.List[PSCustomObject]]$ErrorLog
+    )
+
+    # Count status occurrences from report lines
+    $statusCounts = @{
+        OK = 0
+        WARN = 0
+        FAIL = 0
+        INFO = 0
+    }
+
+    foreach ($line in $ReportLines) {
+        if ($line -match '^\s+\[(OK|WARN|FAIL|INFO)\]\s+') {
+            $status = $Matches[1]
+            $statusCounts[$status]++
+        }
+    }
+
+    # Calculate health score (0-100)
+    $totalChecks = $statusCounts.OK + $statusCounts.WARN + $statusCounts.FAIL
+    if ($totalChecks -eq 0) { $totalChecks = 1 }  # Avoid division by zero
+
+    $healthScore = [math]::Round(
+        (($statusCounts.OK * 100) + ($statusCounts.WARN * 50) + ($statusCounts.FAIL * 0)) / $totalChecks
+    )
+
+    # Determine health status and color
+    $healthStatus = if ($healthScore -ge 90) {
+        @{ Label = "Excellent"; Class = "health-excellent" }
+    } elseif ($healthScore -ge 70) {
+        @{ Label = "Good"; Class = "health-good" }
+    } elseif ($healthScore -ge 50) {
+        @{ Label = "Fair"; Class = "health-fair" }
+    } else {
+        @{ Label = "Poor"; Class = "health-poor" }
+    }
+
+    # Get top 3 issues (prioritize FAIL warnings, then other warnings, then diagnostic summary)
+    $topIssues = @()
+    $failWarnings = $Warnings | Where-Object { $_ -match '\[FAIL\]' } | Select-Object -First 3
+    $topIssues += $failWarnings
+
+    if ($topIssues.Count -lt 3) {
+        $warnWarnings = $Warnings | Where-Object { $_ -match '\[WARN\]' } | Select-Object -First (3 - $topIssues.Count)
+        $topIssues += $warnWarnings
+    }
+
+    if ($topIssues.Count -lt 3) {
+        $diagIssues = $DiagnosticSummary | Select-Object -First (3 - $topIssues.Count)
+        $topIssues += $diagIssues
+    }
+
+    # Clean up issue text (remove status tags)
+    $topIssues = $topIssues | ForEach-Object {
+        $_ -replace '^\s*\[(?:OK|WARN|FAIL|INFO)\]\s+', ''
+    }
+
+    # Build HTML
+    $sb = [System.Text.StringBuilder]::new()
+    $sb.AppendLine("<div class='executive-summary'>") | Out-Null
+    $sb.AppendLine("  <h2>Executive Summary</h2>") | Out-Null
+    $sb.AppendLine("  <div class='summary-grid'>") | Out-Null
+
+    # Health Score Card
+    $sb.AppendLine("    <div class='summary-card'>") | Out-Null
+    $sb.AppendLine("      <h3>Overall Health Score</h3>") | Out-Null
+    $sb.AppendLine("      <div class='health-score $($healthStatus.Class)'>$healthScore</div>") | Out-Null
+    $sb.AppendLine("      <div class='health-label $($healthStatus.Class)'>$($healthStatus.Label)</div>") | Out-Null
+    $sb.AppendLine("    </div>") | Out-Null
+
+    # Statistics Card
+    $sb.AppendLine("    <div class='summary-card'>") | Out-Null
+    $sb.AppendLine("      <h3>Diagnostic Statistics</h3>") | Out-Null
+    $sb.AppendLine("      <div class='stat-grid'>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Passed</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-ok);'>$($statusCounts.OK)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Warnings</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-warn);'>$($statusCounts.WARN)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Failures</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-fail);'>$($statusCounts.FAIL)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Info</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-info);'>$($statusCounts.INFO)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("      </div>") | Out-Null
+    $sb.AppendLine("    </div>") | Out-Null
+    $sb.AppendLine("  </div>") | Out-Null
+
+    # Top Issues Section
+    $sb.AppendLine("  <div class='top-issues'>") | Out-Null
+    $sb.AppendLine("    <h3>Top Issues Detected</h3>") | Out-Null
+
+    if ($topIssues.Count -eq 0) {
+        $sb.AppendLine("    <div class='no-issues'>") | Out-Null
+        $sb.AppendLine("      <svg width='20' height='20' viewBox='0 0 20 20' fill='currentColor'>") | Out-Null
+        $sb.AppendLine("        <path fill-rule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clip-rule='evenodd'/>") | Out-Null
+        $sb.AppendLine("      </svg>") | Out-Null
+        $sb.AppendLine("      <span>No critical issues detected</span>") | Out-Null
+        $sb.AppendLine("    </div>") | Out-Null
+    } else {
+        for ($i = 0; $i -lt $topIssues.Count; $i++) {
+            $issueText = ConvertTo-HtmlEscaped $topIssues[$i]
+            $sb.AppendLine("    <div class='issue-item'>") | Out-Null
+            $sb.AppendLine("      <div class='issue-number'>$($i + 1)</div>") | Out-Null
+            $sb.AppendLine("      <div class='issue-text'>$issueText</div>") | Out-Null
+            $sb.AppendLine("    </div>") | Out-Null
+        }
+    }
+
+    $sb.AppendLine("  </div>") | Out-Null
+    $sb.AppendLine("</div>") | Out-Null
+
+    return $sb.ToString()
+}
+
 function ConvertTo-HtmlReport {
     param(
         [System.Collections.Generic.List[string]]$ReportLines,
         [System.Collections.Generic.List[string]]$DiagnosticSummary,
         [System.Collections.Generic.List[PSCustomObject]]$ErrorLog,
+        [System.Collections.Generic.List[string]]$Warnings,
         [hashtable]$SectionStatus,
         [string]$Hostname,
         [string]$RunTime,
@@ -418,6 +684,15 @@ function ConvertTo-HtmlReport {
 
     # Build content from report lines
     $contentBuilder = [System.Text.StringBuilder]::new()
+
+    # Insert executive summary at the top
+    $executiveSummaryHtml = New-ExecutiveSummary `
+        -ReportLines $ReportLines `
+        -DiagnosticSummary $DiagnosticSummary `
+        -Warnings $Warnings `
+        -ErrorLog $ErrorLog
+    $contentBuilder.AppendLine($executiveSummaryHtml) | Out-Null
+
     $currentSection = $null
     $inSection = $false
 
@@ -1417,6 +1692,7 @@ if (-not $NoHtml) {
             -ReportLines $ReportLines `
             -DiagnosticSummary $DiagnosticSummary `
             -ErrorLog $ErrorLog `
+            -Warnings $Warnings `
             -SectionStatus $SectionStatus `
             -Hostname $env:COMPUTERNAME `
             -RunTime $RunTime `
