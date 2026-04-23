@@ -209,6 +209,15 @@ $Header  = @"
 $ReportLines.Add($Header)
 Write-Host $Header -ForegroundColor White
 
+# Display Quick Mode and Section Filter status
+$quickModeText = "Quick Mode: $(if ($Quick) { 'ENABLED' } else { 'DISABLED' })"
+Write-Raw $quickModeText
+
+if ($null -ne $Sections -and $Sections.Count -gt 0) {
+    $sectionsText = "Sections: $($Sections -join ', ')"
+    Write-Raw $sectionsText
+}
+
 # ─── Pre-Flight Validation ──────────────────────────────────────────────────
 Write-Section "PRE-FLIGHT VALIDATION"
 
