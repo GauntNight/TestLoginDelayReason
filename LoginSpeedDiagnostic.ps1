@@ -788,21 +788,25 @@ try {
         Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
     }
 
-    Write-Raw "  Loaded profiles:"
-    $profiles | Select-Object -First 10 | ForEach-Object {
-        $profilePath = $_.LocalPath
-        $sizeGB      = "?"
-        try {
-            $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
-                          Measure-Object Length -Sum).Sum
-            $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
-        } catch {}
-        $isRoaming = $_.RoamingConfigured
-        $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
-        Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
+    if ($Quick) {
+        Write-Item "Profile enumeration" "Skipped (Quick Mode)" "INFO"
+    } else {
+        Write-Raw "  Loaded profiles:"
+        $profiles | Select-Object -First 10 | ForEach-Object {
+            $profilePath = $_.LocalPath
+            $sizeGB      = "?"
+            try {
+                $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
+                              Measure-Object Length -Sum).Sum
+                $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
+            } catch {}
+            $isRoaming = $_.RoamingConfigured
+            $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
+            Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
 
-        if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
-            $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+            if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
+                $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+            }
         }
     }
 } catch {
