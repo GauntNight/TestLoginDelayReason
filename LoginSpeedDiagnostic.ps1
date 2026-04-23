@@ -221,6 +221,49 @@ function Get-StatusClass {
     }
 }
 
+function Get-SectionSeverity {
+    param(
+        [string]$SectionTitle,
+        [System.Collections.Generic.List[string]]$ReportLines,
+        [hashtable]$SectionStatus
+    )
+
+    # Check if section status explicitly indicates completion state
+    $status = $SectionStatus[$SectionTitle]
+    if ($status -eq "Skipped") { return "info" }
+    if ($status -eq "In Progress") { return "warn" }
+
+    # Count FAIL and WARN items in this section
+    $inSection = $false
+    $failCount = 0
+    $warnCount = 0
+
+    foreach ($line in $ReportLines) {
+        # Detect section start
+        if ($line -match "^={70}$") {
+            $inSection = $false
+        }
+        if ($line -match "^\s+(.+)$" -and $ReportLines[$ReportLines.IndexOf($line) - 1] -match "^={70}$") {
+            if ($Matches[1].Trim() -eq $SectionTitle) {
+                $inSection = $true
+            }
+            continue
+        }
+
+        # Count status in section
+        if ($inSection -and $line -match '^\s+\[(FAIL|WARN|OK)\]') {
+            $itemStatus = $Matches[1]
+            if ($itemStatus -eq "FAIL") { $failCount++ }
+            if ($itemStatus -eq "WARN") { $warnCount++ }
+        }
+    }
+
+    # Determine severity based on counts
+    if ($failCount -gt 0) { return "fail" }
+    if ($warnCount -gt 0) { return "warn" }
+    return "ok"
+}
+
 function Get-HtmlTemplate {
     return @'
 <!DOCTYPE html>
@@ -290,16 +333,86 @@ function Get-HtmlTemplate {
       background-color: var(--color-surface);
       border: 1px solid var(--color-border);
       border-radius: 0.5rem;
-      padding: 1.5rem;
       margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    .section.severity-ok {
+      border-left: 4px solid var(--color-ok);
+    }
+    .section.severity-warn {
+      border-left: 4px solid var(--color-warn);
+    }
+    .section.severity-fail {
+      border-left: 4px solid var(--color-fail);
+    }
+    .section.severity-info {
+      border-left: 4px solid var(--color-info);
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.5rem;
+      cursor: pointer;
+      user-select: none;
+      transition: background-color 0.2s ease;
+    }
+    .section-header:hover {
+      background-color: var(--color-bg);
     }
     .section-title {
       font-size: 1.25rem;
       font-weight: 600;
       color: var(--color-text);
-      margin-bottom: 1rem;
-      padding-bottom: 0.5rem;
-      border-bottom: 2px solid var(--color-border);
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .severity-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.75rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .severity-badge.ok {
+      background-color: var(--color-ok-bg);
+      color: var(--color-ok);
+    }
+    .severity-badge.warn {
+      background-color: var(--color-warn-bg);
+      color: var(--color-warn);
+    }
+    .severity-badge.fail {
+      background-color: var(--color-fail-bg);
+      color: var(--color-fail);
+    }
+    .severity-badge.info {
+      background-color: var(--color-info-bg);
+      color: var(--color-info);
+    }
+    .toggle-icon {
+      width: 24px;
+      height: 24px;
+      transition: transform 0.2s ease;
+      flex-shrink: 0;
+    }
+    .section.collapsed .toggle-icon {
+      transform: rotate(-90deg);
+    }
+    .section-content {
+      padding: 0 1.5rem 1.5rem 1.5rem;
+      max-height: 10000px;
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+    }
+    .section.collapsed .section-content {
+      max-height: 0;
+      padding-top: 0;
+      padding-bottom: 0;
     }
     .item {
       display: grid;
@@ -376,6 +489,31 @@ function Get-HtmlTemplate {
       border-radius: 0.25rem;
       overflow-x: auto;
       margin-top: 0.5rem;
+    }
+    .expand-collapse-all {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      justify-content: flex-end;
+    }
+    .btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--color-border);
+      border-radius: 0.375rem;
+      background-color: var(--color-surface);
+      color: var(--color-text);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn:hover {
+      background-color: var(--color-primary);
+      border-color: var(--color-primary);
+      color: white;
+    }
+    .btn:active {
+      transform: translateY(1px);
     }
     .executive-summary {
       background: linear-gradient(135deg, var(--color-surface) 0%, #f0f4f8 100%);
@@ -525,11 +663,41 @@ function Get-HtmlTemplate {
     <div class="subtitle">Hostname: {{HOSTNAME}} | Quick Mode: {{QUICKMODE}} | Domain Joined: {{DOMAINJOINED}}</div>
   </div>
   <div class="container">
+    <div class="expand-collapse-all">
+      <button class="btn" onclick="expandAll()">Expand All</button>
+      <button class="btn" onclick="collapseAll()">Collapse All</button>
+    </div>
     {{CONTENT}}
   </div>
   <div class="footer">
     <p>AD Login Speed Diagnostic Script &copy; 2024</p>
   </div>
+  <script>
+    function toggleSection(element) {
+      const section = element.closest('.section');
+      section.classList.toggle('collapsed');
+    }
+
+    function expandAll() {
+      document.querySelectorAll('.section.collapsed').forEach(section => {
+        section.classList.remove('collapsed');
+      });
+    }
+
+    function collapseAll() {
+      document.querySelectorAll('.section:not(.collapsed)').forEach(section => {
+        section.classList.add('collapsed');
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.section-header').forEach(header => {
+        header.addEventListener('click', function() {
+          toggleSection(this);
+        });
+      });
+    });
+  </script>
 </body>
 </html>
 '@
@@ -695,6 +863,7 @@ function ConvertTo-HtmlReport {
 
     $currentSection = $null
     $inSection = $false
+    $sectionContent = [System.Text.StringBuilder]::new()
 
     foreach ($line in $ReportLines) {
         # Skip the header box
@@ -710,12 +879,31 @@ function ConvertTo-HtmlReport {
             # Close previous section
             if ($inSection) {
                 $contentBuilder.AppendLine("</div>") | Out-Null
+                $contentBuilder.AppendLine("</div>") | Out-Null
             }
 
             # Start new section
             $sectionTitle = $Matches[1].Trim()
-            $contentBuilder.AppendLine("<div class='section'>") | Out-Null
-            $contentBuilder.AppendLine("<div class='section-title'>$(ConvertTo-HtmlEscaped $sectionTitle)</div>") | Out-Null
+            $currentSection = $sectionTitle
+            $severity = Get-SectionSeverity -SectionTitle $sectionTitle -ReportLines $ReportLines -SectionStatus $SectionStatus
+
+            # Section container with severity class
+            $contentBuilder.AppendLine("<div class='section severity-$severity'>") | Out-Null
+
+            # Section header (clickable)
+            $contentBuilder.AppendLine("  <div class='section-header' role='button' aria-expanded='true'>") | Out-Null
+            $contentBuilder.AppendLine("    <div class='section-title'>") | Out-Null
+            $contentBuilder.AppendLine("      <span>$(ConvertTo-HtmlEscaped $sectionTitle)</span>") | Out-Null
+            $contentBuilder.AppendLine("      <span class='severity-badge $severity'>$($severity.ToUpper())</span>") | Out-Null
+            $contentBuilder.AppendLine("    </div>") | Out-Null
+            $contentBuilder.AppendLine("    <svg class='toggle-icon' viewBox='0 0 20 20' fill='currentColor'>") | Out-Null
+            $contentBuilder.AppendLine("      <path fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/>") | Out-Null
+            $contentBuilder.AppendLine("    </svg>") | Out-Null
+            $contentBuilder.AppendLine("  </div>") | Out-Null
+
+            # Section content (collapsible)
+            $contentBuilder.AppendLine("  <div class='section-content'>") | Out-Null
+
             $inSection = $true
             continue
         }
@@ -744,20 +932,31 @@ function ConvertTo-HtmlReport {
 
     # Close last section
     if ($inSection) {
+        $contentBuilder.AppendLine("  </div>") | Out-Null
         $contentBuilder.AppendLine("</div>") | Out-Null
     }
 
     # Add diagnostic summary if present
     if ($DiagnosticSummary.Count -gt 0) {
-        $contentBuilder.AppendLine("<div class='section'>") | Out-Null
-        $contentBuilder.AppendLine("<div class='section-title'>Diagnostic Summary</div>") | Out-Null
-        $contentBuilder.AppendLine("<div class='summary-box'>") | Out-Null
-        $contentBuilder.AppendLine("<ul>") | Out-Null
+        $contentBuilder.AppendLine("<div class='section severity-info'>") | Out-Null
+        $contentBuilder.AppendLine("  <div class='section-header' role='button' aria-expanded='true'>") | Out-Null
+        $contentBuilder.AppendLine("    <div class='section-title'>") | Out-Null
+        $contentBuilder.AppendLine("      <span>Diagnostic Summary</span>") | Out-Null
+        $contentBuilder.AppendLine("      <span class='severity-badge info'>INFO</span>") | Out-Null
+        $contentBuilder.AppendLine("    </div>") | Out-Null
+        $contentBuilder.AppendLine("    <svg class='toggle-icon' viewBox='0 0 20 20' fill='currentColor'>") | Out-Null
+        $contentBuilder.AppendLine("      <path fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/>") | Out-Null
+        $contentBuilder.AppendLine("    </svg>") | Out-Null
+        $contentBuilder.AppendLine("  </div>") | Out-Null
+        $contentBuilder.AppendLine("  <div class='section-content'>") | Out-Null
+        $contentBuilder.AppendLine("    <div class='summary-box'>") | Out-Null
+        $contentBuilder.AppendLine("      <ul>") | Out-Null
         foreach ($item in $DiagnosticSummary) {
-            $contentBuilder.AppendLine("<li>$(ConvertTo-HtmlEscaped $item)</li>") | Out-Null
+            $contentBuilder.AppendLine("        <li>$(ConvertTo-HtmlEscaped $item)</li>") | Out-Null
         }
-        $contentBuilder.AppendLine("</ul>") | Out-Null
-        $contentBuilder.AppendLine("</div>") | Out-Null
+        $contentBuilder.AppendLine("      </ul>") | Out-Null
+        $contentBuilder.AppendLine("    </div>") | Out-Null
+        $contentBuilder.AppendLine("  </div>") | Out-Null
         $contentBuilder.AppendLine("</div>") | Out-Null
     }
 
