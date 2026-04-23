@@ -27,13 +27,14 @@
     .\LoginSpeedDiagnostic.ps1
     .\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp\MyReport.txt"
     .\LoginSpeedDiagnostic.ps1 -Quick
-    .\LoginSpeedDiagnostic.ps1 -Sections "System","Network"
+    .\LoginSpeedDiagnostic.ps1 -Sections 1,3,5
+    .\LoginSpeedDiagnostic.ps1 -Quick -Sections 4,7
 #>
 
 param(
     [string]$OutputPath = ".\LoginSpeedReport.txt",
     [switch]$Quick,
-    [string[]]$Sections
+    [int[]]$Sections
 )
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
