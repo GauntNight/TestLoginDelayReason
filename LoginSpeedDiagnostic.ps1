@@ -17,13 +17,24 @@
 .PARAMETER OutputPath
     Path to write the report file. Defaults to .\LoginSpeedReport.txt
 
+.PARAMETER Quick
+    Run in quick mode, skipping time-intensive checks
+
+.PARAMETER Sections
+    Specific sections to run. If omitted, all sections are run.
+
 .EXAMPLE
     .\LoginSpeedDiagnostic.ps1
     .\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp\MyReport.txt"
+    .\LoginSpeedDiagnostic.ps1 -Quick
+    .\LoginSpeedDiagnostic.ps1 -Sections 1,3,5
+    .\LoginSpeedDiagnostic.ps1 -Quick -Sections 4,7
 #>
 
 param(
-    [string]$OutputPath = ".\LoginSpeedReport.txt"
+    [string]$OutputPath = ".\LoginSpeedReport.txt",
+    [switch]$Quick,
+    [int[]]$Sections
 )
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
@@ -179,6 +190,14 @@ function Format-FixedWidth {
     }
 }
 
+function Test-ShouldRunSection {
+    param([int]$SectionNumber)
+    if ($null -eq $Sections -or $Sections.Count -eq 0) {
+        return $true
+    }
+    return $Sections -contains $SectionNumber
+}
+
 # ─── Header ─────────────────────────────────────────────────────────────────
 
 $RunTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -190,6 +209,15 @@ $Header  = @"
 "@
 $ReportLines.Add($Header)
 Write-Host $Header -ForegroundColor White
+
+# Display Quick Mode and Section Filter status
+$quickModeText = "Quick Mode: $(if ($Quick) { 'ENABLED' } else { 'DISABLED' })"
+Write-Raw $quickModeText
+
+if ($null -ne $Sections -and $Sections.Count -gt 0) {
+    $sectionsText = "Sections: $($Sections -join ', ')"
+    Write-Raw $sectionsText
+}
 
 # ─── Pre-Flight Validation ──────────────────────────────────────────────────
 Write-Section "PRE-FLIGHT VALIDATION"
@@ -267,6 +295,7 @@ Write-Item -Label "Pre-flight checks" -Value "Complete" -Status "INFO"
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1 – SYSTEM INFORMATION
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 1) {
 Write-Section "1. SYSTEM INFORMATION"
 $SectionStatus["1. System Information"] = "In Progress"
 
@@ -308,10 +337,12 @@ Write-Item "Last Boot"        $os.LastBootUpTime
 Write-Item "Uptime (hrs)"     $(try { [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1) } catch { "Unknown" })
 
 $SectionStatus["1. System Information"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 1*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 2 – LOCAL DEVICE PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 2) {
 Write-Section "2. LOCAL DEVICE PERFORMANCE"
 $SectionStatus["2. Local Device Performance"] = "In Progress"
 $section2Errors = 0
@@ -383,10 +414,12 @@ try {
 }
 
 $SectionStatus["2. Local Device Performance"] = if ($section2Errors -gt 0) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 3 – DNS AND DOMAIN CONTROLLER DISCOVERY
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 3) {
 Write-Section "3. DNS & DOMAIN CONTROLLER DISCOVERY"
 $SectionStatus["3. DNS & DC Discovery"] = "In Progress"
 $section3Errors = 0
@@ -475,10 +508,12 @@ if (-not $IsDomainJoined) {
     }
 }
 $SectionStatus["3. DNS & DC Discovery"] = if ($SectionStatus["3. DNS & DC Discovery"] -eq "Skipped") { "Skipped" } elseif ($section3Errors -gt 0) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 4 – NETWORK CONNECTIVITY TO DOMAIN CONTROLLER
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 4) {
 Write-Section "4. NETWORK CONNECTIVITY TO DOMAIN CONTROLLER"
 $SectionStatus["4. Network Connectivity"] = "In Progress"
 $section4Errors = 0
@@ -523,12 +558,22 @@ if (-not $IsDomainJoined) {
             @{ Port = 3268; Name = "Global Catalog" }
         )
 
+        # Set TCP timeout: 1 second in Quick mode, 5 seconds otherwise
+        $tcpTimeoutMs = if ($Quick) { 1000 } else { 5000 }
+
         foreach ($p in $ports) {
             $connResult = Measure-MSec {
                 $tcp = New-Object System.Net.Sockets.TcpClient
                 try {
-                    $tcp.Connect($script:DC, $p.Port)
-                    $tcp.Connected
+                    # Use async connect with timeout
+                    $connectTask = $tcp.BeginConnect($script:DC, $p.Port, $null, $null)
+                    $success = $connectTask.AsyncWaitHandle.WaitOne($tcpTimeoutMs, $false)
+                    if ($success) {
+                        $tcp.EndConnect($connectTask)
+                        $tcp.Connected
+                    } else {
+                        $false
+                    }
                 } catch { $false }
                 finally { $tcp.Dispose() }
             }
@@ -584,10 +629,12 @@ try {
 } catch {
     Write-Item "Time config" "Could not query time configuration" "WARN"
 }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 5 – GROUP POLICY PROCESSING TIMES (EVENT LOG)
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 5) {
 Write-Section "5. GROUP POLICY PROCESSING TIMES (Last 5 logons)"
 $SectionStatus["5. Group Policy Processing"] = "In Progress"
 
@@ -693,10 +740,12 @@ if (-not $IsDomainJoined) {
         Remove-Item $gpXmlPath -Force -ErrorAction SilentlyContinue
     }
 }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 6 – LOGON EVENT TIMING (Security Event Log)
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 6) {
 Write-Section "6. RECENT INTERACTIVE LOGON EVENTS"
 $SectionStatus["6. Logon Events"] = "In Progress"
 
@@ -740,10 +789,12 @@ if (-not $IsAdmin) {
 }
 
 $SectionStatus["6. Logon Events"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 6*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 7 – USER PROFILE
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 7) {
 Write-Section "7. USER PROFILE"
 $SectionStatus["7. User Profile"] = "In Progress"
 
@@ -757,21 +808,25 @@ try {
         Write-Item "Profile enumeration"  "Running as standard user – showing current user profile only" "WARN"
     }
 
-    Write-Raw "  Loaded profiles:"
-    $profiles | Select-Object -First 10 | ForEach-Object {
-        $profilePath = $_.LocalPath
-        $sizeGB      = "?"
-        try {
-            $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
-                          Measure-Object Length -Sum).Sum
-            $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
-        } catch {}
-        $isRoaming = $_.RoamingConfigured
-        $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
-        Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
+    if ($Quick) {
+        Write-Item "Profile enumeration" "Skipped (Quick Mode)" "INFO"
+    } else {
+        Write-Raw "  Loaded profiles:"
+        $profiles | Select-Object -First 10 | ForEach-Object {
+            $profilePath = $_.LocalPath
+            $sizeGB      = "?"
+            try {
+                $sizeBytes = (Get-ChildItem $profilePath -Recurse -Force -ErrorAction SilentlyContinue |
+                              Measure-Object Length -Sum).Sum
+                $sizeGB    = [math]::Round($sizeBytes / 1GB, 2)
+            } catch {}
+            $isRoaming = $_.RoamingConfigured
+            $status    = if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) { "WARN" } else { "OK" }
+            Write-Item "  $($_.LocalPath)" "Size: $sizeGB GB  Roaming: $isRoaming  Last: $($_.LastUseTime.ToString('yyyy-MM-dd HH:mm'))" $status
 
-        if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
-            $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+            if ($isRoaming -and $sizeGB -is [double] -and $sizeGB -gt 2) {
+                $DiagnosticSummary.Add("Roaming profile at '$profilePath' is $sizeGB GB – large roaming profiles greatly increase logon time.")
+            }
         }
     }
 } catch {
@@ -782,10 +837,12 @@ try {
 }
 
 $SectionStatus["7. User Profile"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 7*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 8 – LOGON SCRIPTS
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 8) {
 Write-Section "8. LOGON SCRIPTS & STARTUP ITEMS"
 $SectionStatus["8. Logon Scripts"] = "In Progress"
 
@@ -833,10 +890,12 @@ foreach ($key in $runKeys) {
 }
 
 $SectionStatus["8. Logon Scripts"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 8*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 9 – WINDOWS LOGON PERFORMANCE (Winlogon event channel)
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 9) {
 Write-Section "9. WINDOWS LOGON PERFORMANCE EVENTS"
 $SectionStatus["9. Winlogon Performance"] = "In Progress"
 
@@ -880,10 +939,12 @@ if ($notifPackages) {
 }
 
 $SectionStatus["9. Winlogon Performance"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 9*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 10 – NETLOGON LOG ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 10) {
 Write-Section "10. NETLOGON LOG ANALYSIS"
 $SectionStatus["10. Netlogon Analysis"] = "In Progress"
 
@@ -928,10 +989,12 @@ try {
 if ($SectionStatus["10. Netlogon Analysis"] -ne "Skipped") {
     $SectionStatus["10. Netlogon Analysis"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 10*" }) { "Partial" } else { "Completed" }
 }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 11 – DIAGNOSTIC SUMMARY & RECOMMENDATIONS
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 11) {
 Write-Section "11. DIAGNOSTIC SUMMARY & RECOMMENDATIONS"
 $SectionStatus["11. Summary & Recommendations"] = "In Progress"
 
@@ -974,10 +1037,12 @@ Write-Raw @"
 "@
 
 $SectionStatus["11. Summary & Recommendations"] = "Completed"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 12 – ERROR LOG
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 12) {
 Write-Section "12. ERROR LOG"
 $SectionStatus["12. Error Log"] = "In Progress"
 
@@ -1045,6 +1110,7 @@ if ($ErrorLog.Count -gt 0) {
 }
 
 $SectionStatus["12. Error Log"] = "Completed"
+}
 
 # ─── Save Report ────────────────────────────────────────────────────────────
 
