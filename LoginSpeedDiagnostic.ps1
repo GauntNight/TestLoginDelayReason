@@ -189,6 +189,14 @@ function Format-FixedWidth {
     }
 }
 
+function Test-ShouldRunSection {
+    param([int]$SectionNumber)
+    if ($null -eq $Sections -or $Sections.Count -eq 0) {
+        return $true
+    }
+    return $Sections -contains $SectionNumber
+}
+
 # ─── Header ─────────────────────────────────────────────────────────────────
 
 $RunTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -277,6 +285,7 @@ Write-Item -Label "Pre-flight checks" -Value "Complete" -Status "INFO"
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 1 – SYSTEM INFORMATION
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 1) {
 Write-Section "1. SYSTEM INFORMATION"
 $SectionStatus["1. System Information"] = "In Progress"
 
@@ -318,10 +327,12 @@ Write-Item "Last Boot"        $os.LastBootUpTime
 Write-Item "Uptime (hrs)"     $(try { [math]::Round(((Get-Date) - $os.LastBootUpTime).TotalHours, 1) } catch { "Unknown" })
 
 $SectionStatus["1. System Information"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 1*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 2 – LOCAL DEVICE PERFORMANCE
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 2) {
 Write-Section "2. LOCAL DEVICE PERFORMANCE"
 $SectionStatus["2. Local Device Performance"] = "In Progress"
 $section2Errors = 0
@@ -393,10 +404,12 @@ try {
 }
 
 $SectionStatus["2. Local Device Performance"] = if ($section2Errors -gt 0) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 3 – DNS AND DOMAIN CONTROLLER DISCOVERY
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 3) {
 Write-Section "3. DNS & DOMAIN CONTROLLER DISCOVERY"
 $SectionStatus["3. DNS & DC Discovery"] = "In Progress"
 $section3Errors = 0
@@ -485,10 +498,12 @@ if (-not $IsDomainJoined) {
     }
 }
 $SectionStatus["3. DNS & DC Discovery"] = if ($SectionStatus["3. DNS & DC Discovery"] -eq "Skipped") { "Skipped" } elseif ($section3Errors -gt 0) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 4 – NETWORK CONNECTIVITY TO DOMAIN CONTROLLER
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 4) {
 Write-Section "4. NETWORK CONNECTIVITY TO DOMAIN CONTROLLER"
 $SectionStatus["4. Network Connectivity"] = "In Progress"
 $section4Errors = 0
@@ -594,10 +609,12 @@ try {
 } catch {
     Write-Item "Time config" "Could not query time configuration" "WARN"
 }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 5 – GROUP POLICY PROCESSING TIMES (EVENT LOG)
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 5) {
 Write-Section "5. GROUP POLICY PROCESSING TIMES (Last 5 logons)"
 $SectionStatus["5. Group Policy Processing"] = "In Progress"
 
@@ -703,10 +720,12 @@ if (-not $IsDomainJoined) {
         Remove-Item $gpXmlPath -Force -ErrorAction SilentlyContinue
     }
 }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 6 – LOGON EVENT TIMING (Security Event Log)
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 6) {
 Write-Section "6. RECENT INTERACTIVE LOGON EVENTS"
 $SectionStatus["6. Logon Events"] = "In Progress"
 
@@ -750,10 +769,12 @@ if (-not $IsAdmin) {
 }
 
 $SectionStatus["6. Logon Events"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 6*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 7 – USER PROFILE
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 7) {
 Write-Section "7. USER PROFILE"
 $SectionStatus["7. User Profile"] = "In Progress"
 
@@ -792,10 +813,12 @@ try {
 }
 
 $SectionStatus["7. User Profile"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 7*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 8 – LOGON SCRIPTS
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 8) {
 Write-Section "8. LOGON SCRIPTS & STARTUP ITEMS"
 $SectionStatus["8. Logon Scripts"] = "In Progress"
 
@@ -843,10 +866,12 @@ foreach ($key in $runKeys) {
 }
 
 $SectionStatus["8. Logon Scripts"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 8*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 9 – WINDOWS LOGON PERFORMANCE (Winlogon event channel)
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 9) {
 Write-Section "9. WINDOWS LOGON PERFORMANCE EVENTS"
 $SectionStatus["9. Winlogon Performance"] = "In Progress"
 
@@ -890,10 +915,12 @@ if ($notifPackages) {
 }
 
 $SectionStatus["9. Winlogon Performance"] = if (-not $IsAdmin) { "Skipped" } elseif ($ErrorLog | Where-Object { $_.Source -like "*Section 9*" }) { "Partial" } else { "Completed" }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 10 – NETLOGON LOG ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 10) {
 Write-Section "10. NETLOGON LOG ANALYSIS"
 $SectionStatus["10. Netlogon Analysis"] = "In Progress"
 
@@ -938,10 +965,12 @@ try {
 if ($SectionStatus["10. Netlogon Analysis"] -ne "Skipped") {
     $SectionStatus["10. Netlogon Analysis"] = if ($ErrorLog | Where-Object { $_.Source -like "*Section 10*" }) { "Partial" } else { "Completed" }
 }
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 11 – DIAGNOSTIC SUMMARY & RECOMMENDATIONS
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 11) {
 Write-Section "11. DIAGNOSTIC SUMMARY & RECOMMENDATIONS"
 $SectionStatus["11. Summary & Recommendations"] = "In Progress"
 
@@ -984,10 +1013,12 @@ Write-Raw @"
 "@
 
 $SectionStatus["11. Summary & Recommendations"] = "Completed"
+}
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SECTION 12 – ERROR LOG
 # ═══════════════════════════════════════════════════════════════════════════
+if (Test-ShouldRunSection -SectionNumber 12) {
 Write-Section "12. ERROR LOG"
 $SectionStatus["12. Error Log"] = "In Progress"
 
@@ -1055,6 +1086,7 @@ if ($ErrorLog.Count -gt 0) {
 }
 
 $SectionStatus["12. Error Log"] = "Completed"
+}
 
 # ─── Save Report ────────────────────────────────────────────────────────────
 
