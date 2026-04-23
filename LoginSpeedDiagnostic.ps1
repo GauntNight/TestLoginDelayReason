@@ -23,18 +23,23 @@
 .PARAMETER Sections
     Specific sections to run. If omitted, all sections are run.
 
+.PARAMETER NoHtml
+    Suppress HTML report generation. By default, both text and HTML reports are created.
+
 .EXAMPLE
     .\LoginSpeedDiagnostic.ps1
     .\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp\MyReport.txt"
     .\LoginSpeedDiagnostic.ps1 -Quick
     .\LoginSpeedDiagnostic.ps1 -Sections 1,3,5
     .\LoginSpeedDiagnostic.ps1 -Quick -Sections 4,7
+    .\LoginSpeedDiagnostic.ps1 -NoHtml
 #>
 
 param(
     [string]$OutputPath = ".\LoginSpeedReport.txt",
     [switch]$Quick,
-    [int[]]$Sections
+    [int[]]$Sections,
+    [switch]$NoHtml
 )
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
@@ -196,6 +201,293 @@ function Test-ShouldRunSection {
         return $true
     }
     return $Sections -contains $SectionNumber
+}
+
+# ─── HTML Generation Helpers ────────────────────────────────────────────────
+
+function ConvertTo-HtmlEscaped {
+    param([string]$Text)
+    if (-not $Text) { return "" }
+    return $Text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace('"', "&quot;").Replace("'", "&#39;")
+}
+
+function Get-StatusClass {
+    param([string]$Status)
+    switch ($Status) {
+        "OK"   { return "status-ok" }
+        "WARN" { return "status-warn" }
+        "FAIL" { return "status-fail" }
+        default { return "status-info" }
+    }
+}
+
+function Get-HtmlTemplate {
+    return @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Windows Login Speed Diagnostic Report">
+  <title>Login Speed Diagnostic Report</title>
+  <style>
+    :root {
+      --color-ok: #10b981;
+      --color-warn: #f59e0b;
+      --color-fail: #ef4444;
+      --color-info: #3b82f6;
+      --color-ok-bg: #d1fae5;
+      --color-warn-bg: #fef3c7;
+      --color-fail-bg: #fee2e2;
+      --color-info-bg: #eff6ff;
+      --color-primary: #0078d4;
+      --color-primary-hover: #005a9e;
+      --color-bg: #f8fafc;
+      --color-surface: #ffffff;
+      --color-border: #e2e8f0;
+      --color-text: #1e293b;
+      --color-text-secondary: #64748b;
+      --color-text-muted: #94a3b8;
+      --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: var(--font-family);
+      font-size: 16px;
+      color: var(--color-text);
+      background-color: var(--color-bg);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    .header {
+      background-color: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      padding: 1.5rem 2rem;
+      margin-bottom: 2rem;
+    }
+    .header h1 {
+      font-size: 1.875rem;
+      font-weight: 700;
+      color: var(--color-primary);
+    }
+    .header .subtitle {
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+      margin-top: 0.25rem;
+    }
+    .section {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 0.5rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--color-text);
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid var(--color-border);
+    }
+    .item {
+      display: grid;
+      grid-template-columns: 40% 1fr auto;
+      gap: 1rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .item:last-child {
+      border-bottom: none;
+    }
+    .item-label {
+      font-weight: 500;
+      color: var(--color-text);
+    }
+    .item-value {
+      color: var(--color-text-secondary);
+      word-break: break-word;
+    }
+    .item-status {
+      padding: 0.25rem 0.75rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-align: center;
+      min-width: 60px;
+    }
+    .status-ok {
+      background-color: var(--color-ok-bg);
+      color: var(--color-ok);
+    }
+    .status-warn {
+      background-color: var(--color-warn-bg);
+      color: var(--color-warn);
+    }
+    .status-fail {
+      background-color: var(--color-fail-bg);
+      color: var(--color-fail);
+    }
+    .status-info {
+      background-color: var(--color-info-bg);
+      color: var(--color-info);
+    }
+    .summary-box {
+      background-color: var(--color-warn-bg);
+      border-left: 4px solid var(--color-warn);
+      padding: 1rem;
+      margin-bottom: 1rem;
+      border-radius: 0.25rem;
+    }
+    .summary-box ul {
+      margin-left: 1.5rem;
+      margin-top: 0.5rem;
+    }
+    .error-log {
+      background-color: var(--color-fail-bg);
+      border-left: 4px solid var(--color-fail);
+      padding: 1rem;
+      margin-top: 1rem;
+      border-radius: 0.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+    }
+    .footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--color-text-muted);
+      font-size: 0.875rem;
+    }
+    pre {
+      font-family: var(--font-mono);
+      background-color: var(--color-bg);
+      padding: 0.75rem;
+      border-radius: 0.25rem;
+      overflow-x: auto;
+      margin-top: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>AD Login Speed Diagnostic Report</h1>
+    <div class="subtitle">Generated: {{TIMESTAMP}}</div>
+    <div class="subtitle">Hostname: {{HOSTNAME}} | Quick Mode: {{QUICKMODE}} | Domain Joined: {{DOMAINJOINED}}</div>
+  </div>
+  <div class="container">
+    {{CONTENT}}
+  </div>
+  <div class="footer">
+    <p>AD Login Speed Diagnostic Script &copy; 2024</p>
+  </div>
+</body>
+</html>
+'@
+}
+
+function ConvertTo-HtmlReport {
+    param(
+        [System.Collections.Generic.List[string]]$ReportLines,
+        [System.Collections.Generic.List[string]]$DiagnosticSummary,
+        [System.Collections.Generic.List[PSCustomObject]]$ErrorLog,
+        [hashtable]$SectionStatus,
+        [string]$Hostname,
+        [string]$RunTime,
+        [bool]$IsQuickMode,
+        [bool]$IsDomainJoined
+    )
+
+    $html = Get-HtmlTemplate
+
+    # Replace metadata
+    $html = $html.Replace("{{TIMESTAMP}}", (ConvertTo-HtmlEscaped $RunTime))
+    $html = $html.Replace("{{HOSTNAME}}", (ConvertTo-HtmlEscaped $Hostname))
+    $html = $html.Replace("{{QUICKMODE}}", $(if ($IsQuickMode) { "ENABLED" } else { "DISABLED" }))
+    $html = $html.Replace("{{DOMAINJOINED}}", $(if ($IsDomainJoined) { "Yes" } else { "No" }))
+
+    # Build content from report lines
+    $contentBuilder = [System.Text.StringBuilder]::new()
+    $currentSection = $null
+    $inSection = $false
+
+    foreach ($line in $ReportLines) {
+        # Skip the header box
+        if ($line -match "^╔═+╗$|^║.*║$|^╚═+╝$") {
+            continue
+        }
+
+        # Detect section headers
+        if ($line -match "^={70}$") {
+            continue
+        }
+        if ($line -match "^\s+(.+)$" -and $ReportLines[$ReportLines.IndexOf($line) - 1] -match "^={70}$") {
+            # Close previous section
+            if ($inSection) {
+                $contentBuilder.AppendLine("</div>") | Out-Null
+            }
+
+            # Start new section
+            $sectionTitle = $Matches[1].Trim()
+            $contentBuilder.AppendLine("<div class='section'>") | Out-Null
+            $contentBuilder.AppendLine("<div class='section-title'>$(ConvertTo-HtmlEscaped $sectionTitle)</div>") | Out-Null
+            $inSection = $true
+            continue
+        }
+
+        # Parse item lines: [STATUS] Label Value
+        if ($line -match '^\s+\[(\w+)\]\s+(.{40})\s+(.+)$') {
+            $status = $Matches[1].Trim()
+            $label = $Matches[2].Trim()
+            $value = $Matches[3].Trim()
+            $statusClass = Get-StatusClass $status
+
+            $contentBuilder.AppendLine("<div class='item'>") | Out-Null
+            $contentBuilder.AppendLine("  <div class='item-label'>$(ConvertTo-HtmlEscaped $label)</div>") | Out-Null
+            $contentBuilder.AppendLine("  <div class='item-value'>$(ConvertTo-HtmlEscaped $value)</div>") | Out-Null
+            $contentBuilder.AppendLine("  <div class='item-status $statusClass'>$status</div>") | Out-Null
+            $contentBuilder.AppendLine("</div>") | Out-Null
+        }
+        # Regular text lines
+        elseif ($line.Trim() -ne "" -and -not ($line -match "^Quick Mode:|^Sections:")) {
+            $escapedLine = ConvertTo-HtmlEscaped $line
+            if ($line -match "^\s{2}[^\s]") {
+                $contentBuilder.AppendLine("<div style='margin-top:0.5rem; color: var(--color-text-secondary);'>$escapedLine</div>") | Out-Null
+            }
+        }
+    }
+
+    # Close last section
+    if ($inSection) {
+        $contentBuilder.AppendLine("</div>") | Out-Null
+    }
+
+    # Add diagnostic summary if present
+    if ($DiagnosticSummary.Count -gt 0) {
+        $contentBuilder.AppendLine("<div class='section'>") | Out-Null
+        $contentBuilder.AppendLine("<div class='section-title'>Diagnostic Summary</div>") | Out-Null
+        $contentBuilder.AppendLine("<div class='summary-box'>") | Out-Null
+        $contentBuilder.AppendLine("<ul>") | Out-Null
+        foreach ($item in $DiagnosticSummary) {
+            $contentBuilder.AppendLine("<li>$(ConvertTo-HtmlEscaped $item)</li>") | Out-Null
+        }
+        $contentBuilder.AppendLine("</ul>") | Out-Null
+        $contentBuilder.AppendLine("</div>") | Out-Null
+        $contentBuilder.AppendLine("</div>") | Out-Null
+    }
+
+    $html = $html.Replace("{{CONTENT}}", $contentBuilder.ToString())
+    return $html
 }
 
 # ─── Header ─────────────────────────────────────────────────────────────────
@@ -1116,6 +1408,27 @@ $SectionStatus["12. Error Log"] = "Completed"
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
+
+# ─── Generate HTML Report (unless -NoHtml specified) ───────────────────────
+if (-not $NoHtml) {
+    $HtmlPath = $OutputPath -replace '\.txt$', '.html'
+    try {
+        $htmlContent = ConvertTo-HtmlReport `
+            -ReportLines $ReportLines `
+            -DiagnosticSummary $DiagnosticSummary `
+            -ErrorLog $ErrorLog `
+            -SectionStatus $SectionStatus `
+            -Hostname $env:COMPUTERNAME `
+            -RunTime $RunTime `
+            -IsQuickMode $Quick `
+            -IsDomainJoined $IsDomainJoined
+
+        $htmlContent | Out-File -FilePath $HtmlPath -Encoding UTF8 -Force
+        Write-Host "HTML report written to: $HtmlPath" -ForegroundColor Green
+    } catch {
+        Write-Host "Warning: Could not generate HTML report: $_" -ForegroundColor Yellow
+    }
+}
 
 # ─── JSON Error Log Export ─────────────────────────────────────────────────
 $JsonPath = $OutputPath -replace '\.txt$', '_errors.json'
