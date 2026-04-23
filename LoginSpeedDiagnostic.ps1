@@ -548,12 +548,22 @@ if (-not $IsDomainJoined) {
             @{ Port = 3268; Name = "Global Catalog" }
         )
 
+        # Set TCP timeout: 1 second in Quick mode, 5 seconds otherwise
+        $tcpTimeoutMs = if ($Quick) { 1000 } else { 5000 }
+
         foreach ($p in $ports) {
             $connResult = Measure-MSec {
                 $tcp = New-Object System.Net.Sockets.TcpClient
                 try {
-                    $tcp.Connect($script:DC, $p.Port)
-                    $tcp.Connected
+                    # Use async connect with timeout
+                    $connectTask = $tcp.BeginConnect($script:DC, $p.Port, $null, $null)
+                    $success = $connectTask.AsyncWaitHandle.WaitOne($tcpTimeoutMs, $false)
+                    if ($success) {
+                        $tcp.EndConnect($connectTask)
+                        $tcp.Connected
+                    } else {
+                        $false
+                    }
                 } catch { $false }
                 finally { $tcp.Dispose() }
             }
