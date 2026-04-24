@@ -23,18 +23,23 @@
 .PARAMETER Sections
     Specific sections to run. If omitted, all sections are run.
 
+.PARAMETER NoHtml
+    Suppress HTML report generation. By default, both text and HTML reports are created.
+
 .EXAMPLE
     .\LoginSpeedDiagnostic.ps1
     .\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp\MyReport.txt"
     .\LoginSpeedDiagnostic.ps1 -Quick
     .\LoginSpeedDiagnostic.ps1 -Sections 1,3,5
     .\LoginSpeedDiagnostic.ps1 -Quick -Sections 4,7
+    .\LoginSpeedDiagnostic.ps1 -NoHtml
 #>
 
 param(
     [string]$OutputPath = ".\LoginSpeedReport.txt",
     [switch]$Quick,
-    [int[]]$Sections
+    [int[]]$Sections,
+    [switch]$NoHtml
 )
 
 # ─── Encoding ────────────────────────────────────────────────────────────────
@@ -196,6 +201,1090 @@ function Test-ShouldRunSection {
         return $true
     }
     return $Sections -contains $SectionNumber
+}
+
+# ─── HTML Generation Helpers ────────────────────────────────────────────────
+
+function ConvertTo-HtmlEscaped {
+    param([string]$Text)
+    if (-not $Text) { return "" }
+    return $Text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace('"', "&quot;").Replace("'", "&#39;")
+}
+
+function Get-StatusClass {
+    param([string]$Status)
+    switch ($Status) {
+        "OK"   { return "status-ok" }
+        "WARN" { return "status-warn" }
+        "FAIL" { return "status-fail" }
+        default { return "status-info" }
+    }
+}
+
+function Get-SectionSeverity {
+    param(
+        [string]$SectionTitle,
+        [System.Collections.Generic.List[string]]$ReportLines,
+        [hashtable]$SectionStatus
+    )
+
+    # Check if section status explicitly indicates completion state
+    $status = $SectionStatus[$SectionTitle]
+    if ($status -eq "Skipped") { return "info" }
+    if ($status -eq "In Progress") { return "warn" }
+
+    # Count FAIL and WARN items in this section
+    $inSection = $false
+    $failCount = 0
+    $warnCount = 0
+
+    foreach ($line in $ReportLines) {
+        # Detect section start
+        if ($line -match "^={70}$") {
+            $inSection = $false
+        }
+        if ($line -match "^\s+(.+)$" -and $ReportLines[$ReportLines.IndexOf($line) - 1] -match "^={70}$") {
+            if ($Matches[1].Trim() -eq $SectionTitle) {
+                $inSection = $true
+            }
+            continue
+        }
+
+        # Count status in section
+        if ($inSection -and $line -match '^\s+\[(FAIL|WARN|OK)\]') {
+            $itemStatus = $Matches[1]
+            if ($itemStatus -eq "FAIL") { $failCount++ }
+            if ($itemStatus -eq "WARN") { $warnCount++ }
+        }
+    }
+
+    # Determine severity based on counts
+    if ($failCount -gt 0) { return "fail" }
+    if ($warnCount -gt 0) { return "warn" }
+    return "ok"
+}
+
+function Get-HtmlTemplate {
+    return @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Windows Login Speed Diagnostic Report">
+  <title>Login Speed Diagnostic Report</title>
+  <style>
+    :root {
+      --color-ok: #10b981;
+      --color-warn: #f59e0b;
+      --color-fail: #ef4444;
+      --color-info: #3b82f6;
+      --color-ok-bg: #d1fae5;
+      --color-warn-bg: #fef3c7;
+      --color-fail-bg: #fee2e2;
+      --color-info-bg: #eff6ff;
+      --color-primary: #0078d4;
+      --color-primary-hover: #005a9e;
+      --color-bg: #f8fafc;
+      --color-surface: #ffffff;
+      --color-border: #e2e8f0;
+      --color-text: #1e293b;
+      --color-text-secondary: #64748b;
+      --color-text-muted: #94a3b8;
+      --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: var(--font-family);
+      font-size: 16px;
+      color: var(--color-text);
+      background-color: var(--color-bg);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    .header {
+      background-color: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      padding: 1.5rem 2rem;
+      margin-bottom: 2rem;
+    }
+    .header h1 {
+      font-size: 1.875rem;
+      font-weight: 700;
+      color: var(--color-primary);
+    }
+    .header .subtitle {
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+      margin-top: 0.25rem;
+    }
+    .section {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 0.5rem;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    .section.severity-ok {
+      border-left: 4px solid var(--color-ok);
+    }
+    .section.severity-warn {
+      border-left: 4px solid var(--color-warn);
+    }
+    .section.severity-fail {
+      border-left: 4px solid var(--color-fail);
+    }
+    .section.severity-info {
+      border-left: 4px solid var(--color-info);
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.5rem;
+      cursor: pointer;
+      user-select: none;
+      transition: background-color 0.2s ease;
+    }
+    .section-header:hover {
+      background-color: var(--color-bg);
+    }
+    .section-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--color-text);
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .severity-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.25rem 0.75rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .severity-badge.ok {
+      background-color: var(--color-ok-bg);
+      color: var(--color-ok);
+    }
+    .severity-badge.warn {
+      background-color: var(--color-warn-bg);
+      color: var(--color-warn);
+    }
+    .severity-badge.fail {
+      background-color: var(--color-fail-bg);
+      color: var(--color-fail);
+    }
+    .severity-badge.info {
+      background-color: var(--color-info-bg);
+      color: var(--color-info);
+    }
+    .toggle-icon {
+      width: 24px;
+      height: 24px;
+      transition: transform 0.2s ease;
+      flex-shrink: 0;
+    }
+    .section.collapsed .toggle-icon {
+      transform: rotate(-90deg);
+    }
+    .section-content {
+      padding: 0 1.5rem 1.5rem 1.5rem;
+      max-height: 10000px;
+      overflow: hidden;
+      transition: max-height 0.3s ease, padding 0.3s ease;
+    }
+    .section.collapsed .section-content {
+      max-height: 0;
+      padding-top: 0;
+      padding-bottom: 0;
+    }
+    .item {
+      display: grid;
+      grid-template-columns: 40% 1fr auto;
+      gap: 1rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+    .item:last-child {
+      border-bottom: none;
+    }
+    .item-label {
+      font-weight: 500;
+      color: var(--color-text);
+    }
+    .item-value {
+      color: var(--color-text-secondary);
+      word-break: break-word;
+    }
+    .item-status {
+      padding: 0.25rem 0.75rem;
+      border-radius: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-align: center;
+      min-width: 60px;
+    }
+    .status-ok {
+      background-color: var(--color-ok-bg);
+      color: var(--color-ok);
+    }
+    .status-warn {
+      background-color: var(--color-warn-bg);
+      color: var(--color-warn);
+    }
+    .status-fail {
+      background-color: var(--color-fail-bg);
+      color: var(--color-fail);
+    }
+    .status-info {
+      background-color: var(--color-info-bg);
+      color: var(--color-info);
+    }
+    .summary-box {
+      background-color: var(--color-warn-bg);
+      border-left: 4px solid var(--color-warn);
+      padding: 1rem;
+      margin-bottom: 1rem;
+      border-radius: 0.25rem;
+    }
+    .summary-box ul {
+      margin-left: 1.5rem;
+      margin-top: 0.5rem;
+    }
+    .error-log {
+      background-color: var(--color-fail-bg);
+      border-left: 4px solid var(--color-fail);
+      padding: 1rem;
+      margin-top: 1rem;
+      border-radius: 0.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+    }
+    .footer {
+      text-align: center;
+      padding: 2rem;
+      color: var(--color-text-muted);
+      font-size: 0.875rem;
+    }
+    pre {
+      font-family: var(--font-mono);
+      background-color: var(--color-bg);
+      padding: 0.75rem;
+      border-radius: 0.25rem;
+      overflow-x: auto;
+      margin-top: 0.5rem;
+    }
+    .expand-collapse-all {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+      justify-content: flex-end;
+    }
+    .btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--color-border);
+      border-radius: 0.375rem;
+      background-color: var(--color-surface);
+      color: var(--color-text);
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .btn:hover {
+      background-color: var(--color-primary);
+      border-color: var(--color-primary);
+      color: white;
+    }
+    .btn:active {
+      transform: translateY(1px);
+    }
+    .executive-summary {
+      background: linear-gradient(135deg, var(--color-surface) 0%, #f0f4f8 100%);
+      border: 2px solid var(--color-border);
+      border-radius: 0.75rem;
+      padding: 2rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07);
+    }
+    .executive-summary h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--color-text);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 3px solid var(--color-primary);
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .summary-card {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 0.5rem;
+      padding: 1.25rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    .summary-card h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      margin-bottom: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .health-score {
+      font-size: 3rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 0.5rem;
+    }
+    .health-excellent {
+      color: var(--color-ok);
+    }
+    .health-good {
+      color: #22c55e;
+    }
+    .health-fair {
+      color: var(--color-warn);
+    }
+    .health-poor {
+      color: var(--color-fail);
+    }
+    .health-label {
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 0.75rem;
+    }
+    .stat-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 0.75rem;
+      background-color: var(--color-bg);
+      border-radius: 0.375rem;
+    }
+    .stat-label {
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+    }
+    .stat-value {
+      font-size: 1.125rem;
+      font-weight: 700;
+    }
+    .top-issues {
+      background-color: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: 0.5rem;
+      padding: 1.25rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    }
+    .top-issues h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--color-text-secondary);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .issue-item {
+      display: flex;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      margin-bottom: 0.75rem;
+      background-color: var(--color-fail-bg);
+      border-left: 4px solid var(--color-fail);
+      border-radius: 0.375rem;
+    }
+    .issue-item:last-child {
+      margin-bottom: 0;
+    }
+    .issue-number {
+      flex-shrink: 0;
+      width: 1.75rem;
+      height: 1.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: var(--color-fail);
+      color: white;
+      border-radius: 50%;
+      font-weight: 700;
+      font-size: 0.875rem;
+    }
+    .issue-text {
+      flex: 1;
+      font-size: 0.875rem;
+      line-height: 1.5;
+      color: var(--color-text);
+    }
+    .no-issues {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 1rem;
+      background-color: var(--color-ok-bg);
+      border-left: 4px solid var(--color-ok);
+      border-radius: 0.375rem;
+      color: var(--color-ok);
+      font-weight: 600;
+    }
+
+    /* ========================================
+       Print Styles
+       ======================================== */
+    @media print {
+      /* Base print styles */
+      body {
+        background: #ffffff;
+        color: #000000;
+        font-size: 11pt;
+        line-height: 1.5;
+      }
+
+      /* Header and footer */
+      .header {
+        box-shadow: none;
+        border-bottom: 2px solid #000000;
+        padding: 0.5cm 1cm;
+        margin-bottom: 0.5cm;
+      }
+
+      .header h1 {
+        color: #000000;
+        font-size: 18pt;
+      }
+
+      .header .subtitle {
+        font-size: 10pt;
+        color: #333333;
+      }
+
+      .footer {
+        border-top: 1px solid #000000;
+        padding: 0.25cm 0;
+        font-size: 9pt;
+        break-before: auto;
+      }
+
+      /* Container adjustments */
+      .container {
+        max-width: 100%;
+        padding: 0.5cm 1cm;
+      }
+
+      /* Hide interactive elements */
+      .expand-collapse-all {
+        display: none !important;
+      }
+
+      .btn {
+        display: none !important;
+      }
+
+      /* Executive summary */
+      .executive-summary {
+        background: #ffffff;
+        border: 2px solid #000000;
+        box-shadow: none;
+        padding: 0.5cm;
+        margin-bottom: 0.5cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .executive-summary h2 {
+        font-size: 14pt;
+        color: #000000;
+        border-bottom-color: #000000;
+        margin-bottom: 0.3cm;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 0.3cm;
+      }
+
+      .summary-card {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        padding: 0.3cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .summary-card h3 {
+        font-size: 9pt;
+        color: #666666;
+      }
+
+      .health-score {
+        font-size: 24pt;
+      }
+
+      .health-excellent,
+      .health-good,
+      .health-fair,
+      .health-poor {
+        color: #000000;
+      }
+
+      .stat-item {
+        background-color: #f5f5f5;
+        padding: 0.15cm 0.2cm;
+      }
+
+      .stat-label {
+        font-size: 9pt;
+        color: #666666;
+      }
+
+      .stat-value {
+        font-size: 11pt;
+        color: #000000;
+      }
+
+      /* Top issues section */
+      .top-issues {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        padding: 0.3cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .top-issues h3 {
+        font-size: 9pt;
+        color: #666666;
+      }
+
+      .issue-item {
+        background-color: #f5f5f5;
+        border-left-color: #666666;
+        margin-bottom: 0.2cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .issue-number {
+        background-color: #666666;
+      }
+
+      .issue-text {
+        font-size: 9pt;
+      }
+
+      .no-issues {
+        background-color: #f0f0f0;
+        border-left-color: #666666;
+        color: #000000;
+      }
+
+      /* Section styles */
+      .section {
+        box-shadow: none;
+        border: 1px solid #cccccc;
+        margin-bottom: 0.4cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .section.severity-ok {
+        border-left: 3px solid #666666;
+      }
+
+      .section.severity-warn {
+        border-left: 3px solid #333333;
+      }
+
+      .section.severity-fail {
+        border-left: 3px solid #000000;
+        border-left-width: 4px;
+      }
+
+      .section.severity-info {
+        border-left: 3px solid #999999;
+      }
+
+      /* Force all sections to be expanded in print */
+      .section.collapsed .section-content {
+        max-height: none !important;
+        padding: 0 0.4cm 0.4cm 0.4cm !important;
+      }
+
+      .section-header {
+        padding: 0.3cm 0.4cm;
+        cursor: default;
+        background-color: #ffffff;
+      }
+
+      .section-header:hover {
+        background-color: #ffffff;
+      }
+
+      .section-title {
+        font-size: 12pt;
+        color: #000000;
+      }
+
+      /* Hide toggle icons in print */
+      .toggle-icon {
+        display: none !important;
+      }
+
+      .section-content {
+        padding: 0 0.4cm 0.4cm 0.4cm;
+      }
+
+      /* Severity badges */
+      .severity-badge {
+        font-size: 8pt;
+        padding: 0.1cm 0.2cm;
+      }
+
+      .severity-badge.ok {
+        background-color: #e0e0e0;
+        color: #000000;
+      }
+
+      .severity-badge.warn {
+        background-color: #d0d0d0;
+        color: #000000;
+        border: 1px solid #999999;
+      }
+
+      .severity-badge.fail {
+        background-color: #c0c0c0;
+        color: #000000;
+        border: 1px solid #666666;
+      }
+
+      .severity-badge.info {
+        background-color: #e8e8e8;
+        color: #000000;
+      }
+
+      /* Item rows */
+      .item {
+        padding: 0.2cm 0;
+        border-bottom: 1px solid #dddddd;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .item-label {
+        font-size: 10pt;
+        color: #000000;
+      }
+
+      .item-value {
+        font-size: 10pt;
+        color: #333333;
+      }
+
+      .item-status {
+        font-size: 9pt;
+      }
+
+      .status-ok {
+        background-color: #e0e0e0;
+        color: #000000;
+      }
+
+      .status-warn {
+        background-color: #d0d0d0;
+        color: #000000;
+        border: 1px solid #999999;
+      }
+
+      .status-fail {
+        background-color: #c0c0c0;
+        color: #000000;
+        border: 1px solid #666666;
+      }
+
+      .status-info {
+        background-color: #e8e8e8;
+        color: #000000;
+      }
+
+      /* Summary and error boxes */
+      .summary-box {
+        background-color: #f5f5f5;
+        border-left-color: #666666;
+        padding: 0.3cm;
+        margin-bottom: 0.3cm;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      .summary-box ul {
+        margin-left: 0.5cm;
+      }
+
+      .error-log {
+        background-color: #f5f5f5;
+        border-left-color: #333333;
+        padding: 0.3cm;
+        font-size: 9pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      /* Code blocks */
+      pre {
+        background-color: #f8f8f8;
+        border: 1px solid #cccccc;
+        padding: 0.2cm;
+        font-size: 9pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      /* Ensure good page breaks */
+      h1, h2, h3, h4, h5, h6 {
+        break-after: avoid;
+        page-break-after: avoid;
+      }
+
+      /* Remove unnecessary margins for print density */
+      * {
+        box-shadow: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>AD Login Speed Diagnostic Report</h1>
+    <div class="subtitle">Generated: {{TIMESTAMP}}</div>
+    <div class="subtitle">Hostname: {{HOSTNAME}} | Quick Mode: {{QUICKMODE}} | Domain Joined: {{DOMAINJOINED}}</div>
+  </div>
+  <div class="container">
+    <div class="expand-collapse-all">
+      <button class="btn" onclick="expandAll()">Expand All</button>
+      <button class="btn" onclick="collapseAll()">Collapse All</button>
+    </div>
+    {{CONTENT}}
+  </div>
+  <div class="footer">
+    <p>AD Login Speed Diagnostic Script &copy; 2024</p>
+  </div>
+  <script>
+    function toggleSection(element) {
+      const section = element.closest('.section');
+      section.classList.toggle('collapsed');
+    }
+
+    function expandAll() {
+      document.querySelectorAll('.section.collapsed').forEach(section => {
+        section.classList.remove('collapsed');
+      });
+    }
+
+    function collapseAll() {
+      document.querySelectorAll('.section:not(.collapsed)').forEach(section => {
+        section.classList.add('collapsed');
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.section-header').forEach(header => {
+        header.addEventListener('click', function() {
+          toggleSection(this);
+        });
+      });
+    });
+  </script>
+</body>
+</html>
+'@
+}
+
+function New-ExecutiveSummary {
+    param(
+        [System.Collections.Generic.List[string]]$ReportLines,
+        [System.Collections.Generic.List[string]]$DiagnosticSummary,
+        [System.Collections.Generic.List[string]]$Warnings,
+        [System.Collections.Generic.List[PSCustomObject]]$ErrorLog
+    )
+
+    # Count status occurrences from report lines
+    $statusCounts = @{
+        OK = 0
+        WARN = 0
+        FAIL = 0
+        INFO = 0
+    }
+
+    foreach ($line in $ReportLines) {
+        if ($line -match '^\s+\[(OK|WARN|FAIL|INFO)\]\s+') {
+            $status = $Matches[1]
+            $statusCounts[$status]++
+        }
+    }
+
+    # Calculate health score (0-100)
+    $totalChecks = $statusCounts.OK + $statusCounts.WARN + $statusCounts.FAIL
+    if ($totalChecks -eq 0) { $totalChecks = 1 }  # Avoid division by zero
+
+    $healthScore = [math]::Round(
+        (($statusCounts.OK * 100) + ($statusCounts.WARN * 50) + ($statusCounts.FAIL * 0)) / $totalChecks
+    )
+
+    # Determine health status and color
+    $healthStatus = if ($healthScore -ge 90) {
+        @{ Label = "Excellent"; Class = "health-excellent" }
+    } elseif ($healthScore -ge 70) {
+        @{ Label = "Good"; Class = "health-good" }
+    } elseif ($healthScore -ge 50) {
+        @{ Label = "Fair"; Class = "health-fair" }
+    } else {
+        @{ Label = "Poor"; Class = "health-poor" }
+    }
+
+    # Get top 3 issues (prioritize FAIL warnings, then other warnings, then diagnostic summary)
+    $topIssues = @()
+    $failWarnings = $Warnings | Where-Object { $_ -match '\[FAIL\]' } | Select-Object -First 3
+    $topIssues += $failWarnings
+
+    if ($topIssues.Count -lt 3) {
+        $warnWarnings = $Warnings | Where-Object { $_ -match '\[WARN\]' } | Select-Object -First (3 - $topIssues.Count)
+        $topIssues += $warnWarnings
+    }
+
+    if ($topIssues.Count -lt 3) {
+        $diagIssues = $DiagnosticSummary | Select-Object -First (3 - $topIssues.Count)
+        $topIssues += $diagIssues
+    }
+
+    # Clean up issue text (remove status tags)
+    $topIssues = $topIssues | ForEach-Object {
+        $_ -replace '^\s*\[(?:OK|WARN|FAIL|INFO)\]\s+', ''
+    }
+
+    # Build HTML
+    $sb = [System.Text.StringBuilder]::new()
+    $sb.AppendLine("<div class='executive-summary'>") | Out-Null
+    $sb.AppendLine("  <h2>Executive Summary</h2>") | Out-Null
+    $sb.AppendLine("  <div class='summary-grid'>") | Out-Null
+
+    # Health Score Card
+    $sb.AppendLine("    <div class='summary-card'>") | Out-Null
+    $sb.AppendLine("      <h3>Overall Health Score</h3>") | Out-Null
+    $sb.AppendLine("      <div class='health-score $($healthStatus.Class)'>$healthScore</div>") | Out-Null
+    $sb.AppendLine("      <div class='health-label $($healthStatus.Class)'>$($healthStatus.Label)</div>") | Out-Null
+    $sb.AppendLine("    </div>") | Out-Null
+
+    # Statistics Card
+    $sb.AppendLine("    <div class='summary-card'>") | Out-Null
+    $sb.AppendLine("      <h3>Diagnostic Statistics</h3>") | Out-Null
+    $sb.AppendLine("      <div class='stat-grid'>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Passed</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-ok);'>$($statusCounts.OK)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Warnings</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-warn);'>$($statusCounts.WARN)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Failures</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-fail);'>$($statusCounts.FAIL)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("        <div class='stat-item'>") | Out-Null
+    $sb.AppendLine("          <span class='stat-label'>Info</span>") | Out-Null
+    $sb.AppendLine("          <span class='stat-value' style='color: var(--color-info);'>$($statusCounts.INFO)</span>") | Out-Null
+    $sb.AppendLine("        </div>") | Out-Null
+    $sb.AppendLine("      </div>") | Out-Null
+    $sb.AppendLine("    </div>") | Out-Null
+    $sb.AppendLine("  </div>") | Out-Null
+
+    # Top Issues Section
+    $sb.AppendLine("  <div class='top-issues'>") | Out-Null
+    $sb.AppendLine("    <h3>Top Issues Detected</h3>") | Out-Null
+
+    if ($topIssues.Count -eq 0) {
+        $sb.AppendLine("    <div class='no-issues'>") | Out-Null
+        $sb.AppendLine("      <svg width='20' height='20' viewBox='0 0 20 20' fill='currentColor'>") | Out-Null
+        $sb.AppendLine("        <path fill-rule='evenodd' d='M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z' clip-rule='evenodd'/>") | Out-Null
+        $sb.AppendLine("      </svg>") | Out-Null
+        $sb.AppendLine("      <span>No critical issues detected</span>") | Out-Null
+        $sb.AppendLine("    </div>") | Out-Null
+    } else {
+        for ($i = 0; $i -lt $topIssues.Count; $i++) {
+            $issueText = ConvertTo-HtmlEscaped $topIssues[$i]
+            $sb.AppendLine("    <div class='issue-item'>") | Out-Null
+            $sb.AppendLine("      <div class='issue-number'>$($i + 1)</div>") | Out-Null
+            $sb.AppendLine("      <div class='issue-text'>$issueText</div>") | Out-Null
+            $sb.AppendLine("    </div>") | Out-Null
+        }
+    }
+
+    $sb.AppendLine("  </div>") | Out-Null
+    $sb.AppendLine("</div>") | Out-Null
+
+    return $sb.ToString()
+}
+
+function ConvertTo-HtmlReport {
+    param(
+        [System.Collections.Generic.List[string]]$ReportLines,
+        [System.Collections.Generic.List[string]]$DiagnosticSummary,
+        [System.Collections.Generic.List[PSCustomObject]]$ErrorLog,
+        [System.Collections.Generic.List[string]]$Warnings,
+        [hashtable]$SectionStatus,
+        [string]$Hostname,
+        [string]$RunTime,
+        [bool]$IsQuickMode,
+        [bool]$IsDomainJoined
+    )
+
+    $html = Get-HtmlTemplate
+
+    # Replace metadata
+    $html = $html.Replace("{{TIMESTAMP}}", (ConvertTo-HtmlEscaped $RunTime))
+    $html = $html.Replace("{{HOSTNAME}}", (ConvertTo-HtmlEscaped $Hostname))
+    $html = $html.Replace("{{QUICKMODE}}", $(if ($IsQuickMode) { "ENABLED" } else { "DISABLED" }))
+    $html = $html.Replace("{{DOMAINJOINED}}", $(if ($IsDomainJoined) { "Yes" } else { "No" }))
+
+    # Build content from report lines
+    $contentBuilder = [System.Text.StringBuilder]::new()
+
+    # Insert executive summary at the top
+    $executiveSummaryHtml = New-ExecutiveSummary `
+        -ReportLines $ReportLines `
+        -DiagnosticSummary $DiagnosticSummary `
+        -Warnings $Warnings `
+        -ErrorLog $ErrorLog
+    $contentBuilder.AppendLine($executiveSummaryHtml) | Out-Null
+
+    $currentSection = $null
+    $inSection = $false
+    $sectionContent = [System.Text.StringBuilder]::new()
+
+    foreach ($line in $ReportLines) {
+        # Skip the header box
+        if ($line -match "^╔═+╗$|^║.*║$|^╚═+╝$") {
+            continue
+        }
+
+        # Detect section headers
+        if ($line -match "^={70}$") {
+            continue
+        }
+        if ($line -match "^\s+(.+)$" -and $ReportLines[$ReportLines.IndexOf($line) - 1] -match "^={70}$") {
+            # Close previous section
+            if ($inSection) {
+                $contentBuilder.AppendLine("</div>") | Out-Null
+                $contentBuilder.AppendLine("</div>") | Out-Null
+            }
+
+            # Start new section
+            $sectionTitle = $Matches[1].Trim()
+            $currentSection = $sectionTitle
+            $severity = Get-SectionSeverity -SectionTitle $sectionTitle -ReportLines $ReportLines -SectionStatus $SectionStatus
+
+            # Section container with severity class
+            $contentBuilder.AppendLine("<div class='section severity-$severity'>") | Out-Null
+
+            # Section header (clickable)
+            $contentBuilder.AppendLine("  <div class='section-header' role='button' aria-expanded='true'>") | Out-Null
+            $contentBuilder.AppendLine("    <div class='section-title'>") | Out-Null
+            $contentBuilder.AppendLine("      <span>$(ConvertTo-HtmlEscaped $sectionTitle)</span>") | Out-Null
+            $contentBuilder.AppendLine("      <span class='severity-badge $severity'>$($severity.ToUpper())</span>") | Out-Null
+            $contentBuilder.AppendLine("    </div>") | Out-Null
+            $contentBuilder.AppendLine("    <svg class='toggle-icon' viewBox='0 0 20 20' fill='currentColor'>") | Out-Null
+            $contentBuilder.AppendLine("      <path fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/>") | Out-Null
+            $contentBuilder.AppendLine("    </svg>") | Out-Null
+            $contentBuilder.AppendLine("  </div>") | Out-Null
+
+            # Section content (collapsible)
+            $contentBuilder.AppendLine("  <div class='section-content'>") | Out-Null
+
+            $inSection = $true
+            continue
+        }
+
+        # Parse item lines: [STATUS] Label Value
+        if ($line -match '^\s+\[(\w+)\]\s+(.{40})\s+(.+)$') {
+            $status = $Matches[1].Trim()
+            $label = $Matches[2].Trim()
+            $value = $Matches[3].Trim()
+            $statusClass = Get-StatusClass $status
+
+            $contentBuilder.AppendLine("<div class='item'>") | Out-Null
+            $contentBuilder.AppendLine("  <div class='item-label'>$(ConvertTo-HtmlEscaped $label)</div>") | Out-Null
+            $contentBuilder.AppendLine("  <div class='item-value'>$(ConvertTo-HtmlEscaped $value)</div>") | Out-Null
+            $contentBuilder.AppendLine("  <div class='item-status $statusClass'>$status</div>") | Out-Null
+            $contentBuilder.AppendLine("</div>") | Out-Null
+        }
+        # Regular text lines
+        elseif ($line.Trim() -ne "" -and -not ($line -match "^Quick Mode:|^Sections:")) {
+            $escapedLine = ConvertTo-HtmlEscaped $line
+            if ($line -match "^\s{2}[^\s]") {
+                $contentBuilder.AppendLine("<div style='margin-top:0.5rem; color: var(--color-text-secondary);'>$escapedLine</div>") | Out-Null
+            }
+        }
+    }
+
+    # Close last section
+    if ($inSection) {
+        $contentBuilder.AppendLine("  </div>") | Out-Null
+        $contentBuilder.AppendLine("</div>") | Out-Null
+    }
+
+    # Add diagnostic summary if present
+    if ($DiagnosticSummary.Count -gt 0) {
+        $contentBuilder.AppendLine("<div class='section severity-info'>") | Out-Null
+        $contentBuilder.AppendLine("  <div class='section-header' role='button' aria-expanded='true'>") | Out-Null
+        $contentBuilder.AppendLine("    <div class='section-title'>") | Out-Null
+        $contentBuilder.AppendLine("      <span>Diagnostic Summary</span>") | Out-Null
+        $contentBuilder.AppendLine("      <span class='severity-badge info'>INFO</span>") | Out-Null
+        $contentBuilder.AppendLine("    </div>") | Out-Null
+        $contentBuilder.AppendLine("    <svg class='toggle-icon' viewBox='0 0 20 20' fill='currentColor'>") | Out-Null
+        $contentBuilder.AppendLine("      <path fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/>") | Out-Null
+        $contentBuilder.AppendLine("    </svg>") | Out-Null
+        $contentBuilder.AppendLine("  </div>") | Out-Null
+        $contentBuilder.AppendLine("  <div class='section-content'>") | Out-Null
+        $contentBuilder.AppendLine("    <div class='summary-box'>") | Out-Null
+        $contentBuilder.AppendLine("      <ul>") | Out-Null
+        foreach ($item in $DiagnosticSummary) {
+            $contentBuilder.AppendLine("        <li>$(ConvertTo-HtmlEscaped $item)</li>") | Out-Null
+        }
+        $contentBuilder.AppendLine("      </ul>") | Out-Null
+        $contentBuilder.AppendLine("    </div>") | Out-Null
+        $contentBuilder.AppendLine("  </div>") | Out-Null
+        $contentBuilder.AppendLine("</div>") | Out-Null
+    }
+
+    $html = $html.Replace("{{CONTENT}}", $contentBuilder.ToString())
+    return $html
 }
 
 # ─── Header ─────────────────────────────────────────────────────────────────
@@ -1116,6 +2205,28 @@ $SectionStatus["12. Error Log"] = "Completed"
 
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
+
+# ─── Generate HTML Report (unless -NoHtml specified) ───────────────────────
+if (-not $NoHtml) {
+    $HtmlPath = $OutputPath -replace '\.txt$', '.html'
+    try {
+        $htmlContent = ConvertTo-HtmlReport `
+            -ReportLines $ReportLines `
+            -DiagnosticSummary $DiagnosticSummary `
+            -ErrorLog $ErrorLog `
+            -Warnings $Warnings `
+            -SectionStatus $SectionStatus `
+            -Hostname $env:COMPUTERNAME `
+            -RunTime $RunTime `
+            -IsQuickMode $Quick `
+            -IsDomainJoined $IsDomainJoined
+
+        $htmlContent | Out-File -FilePath $HtmlPath -Encoding UTF8 -Force
+        Write-Host "HTML report written to: $HtmlPath" -ForegroundColor Green
+    } catch {
+        Write-Host "Warning: Could not generate HTML report: $_" -ForegroundColor Yellow
+    }
+}
 
 # ─── JSON Error Log Export ─────────────────────────────────────────────────
 $JsonPath = $OutputPath -replace '\.txt$', '_errors.json'
