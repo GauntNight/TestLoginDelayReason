@@ -1,0 +1,259 @@
+{
+  "feature": "Pre-release security and privacy audit",
+  "description": "Scan repo for sensitive information and remediate before making public on GitHub.",
+  "created_at": "2026-04-23T20:44:58.903Z",
+  "updated_at": "2026-04-24T13:26:29.314Z",
+  "status": "in_progress",
+  "planStatus": "in_progress",
+  "xstateState": "coding",
+  "executionPhase": "coding",
+  "lastEvent": {
+    "eventId": "6a92587c-4637-4f74-b688-01d0f251fdbb",
+    "sequence": 1,
+    "type": "PLANNING_COMPLETE",
+    "timestamp": "2026-04-24T13:22:08.957327+00:00"
+  },
+  "workflow_type": "feature",
+  "workflow_rationale": "This task produces a discrete, committable change (removing tracked files, scrubbing PII) that prepares the repo for public release. The investigation/scan phase was completed during spec writing — all issues are already identified. What remains is implementation of the remediations, followed by a verification scan.",
+  "phases": [
+    {
+      "id": "phase-1-remediate",
+      "name": "Remediate Identified Issues",
+      "type": "implementation",
+      "description": "Remove sensitive files from git tracking, delete internal QA documents, and scrub personal email from the module manifest. All issues were identified during spec writing — this phase executes the fixes.",
+      "depends_on": [],
+      "parallel_safe": false,
+      "subtasks": [
+        {
+          "id": "subtask-1-1",
+          "description": "Remove internal tooling files from git tracking using git rm --cached. Files: .auto-claude-security.json, .auto-claude-status, .claude_settings.json. These must remain on disk (needed by auto-claude framework) but must not be in the git index.",
+          "service": "powershell-tool",
+          "files_to_modify": [],
+          "files_to_create": [],
+          "patterns_from": [],
+          "verification": {
+            "type": "command",
+            "command": "git ls-files --cached .auto-claude-security.json .auto-claude-status .claude_settings.json",
+            "expected": "Empty output (no files listed)"
+          },
+          "notes": "Use git rm --cached (NOT git rm) to preserve files on disk. Prior branch auto-claude/001 commit 7bbcaeb did exactly this but was never merged — follow the same pattern.",
+          "status": "completed"
+        },
+        {
+          "id": "subtask-1-2",
+          "description": "Remove internal QA/verification documents from the repository. Files: test-verification-report.md, BACKWARD_COMPATIBILITY_VERIFICATION.md, verification-sections-parameter.md. These should be fully deleted (not needed on disk) as they expose internal auto-claude tooling details.",
+          "service": "powershell-tool",
+          "files_to_modify": [],
+          "files_to_create": [],
+          "patterns_from": [],
+          "verification": {
+            "type": "command",
+            "command": "git ls-files --cached test-verification-report.md BACKWARD_COMPATIBILITY_VERIFICATION.md verification-sections-parameter.md",
+            "expected": "Empty output (no files listed)"
+          },
+          "notes": "Use git rm (without --cached) to remove from both index and working tree. These files serve no purpose for public users.",
+          "status": "completed"
+        },
+        {
+          "id": "subtask-1-3",
+          "description": "Replace personal email address in LoginSpeedDiagnostic.psd1 Author field. Change 'rob.peterscheck@gmail.com' to 'GauntNight' (GitHub username).",
+          "service": "powershell-tool",
+          "files_to_modify": [
+            "LoginSpeedDiagnostic.psd1"
+          ],
+          "files_to_create": [],
+          "patterns_from": [],
+          "verification": {
+            "type": "command",
+            "command": "powershell -Command \"Test-ModuleManifest LoginSpeedDiagnostic.psd1 | Select-Object -ExpandProperty Author\"",
+            "expected": "GauntNight"
+          },
+          "notes": "Only line 12 needs to change: Author = 'rob.peterscheck@gmail.com' -> Author = 'GauntNight'. After editing, verify the manifest is still valid with Test-ModuleManifest.",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "id": "phase-2-verify",
+      "name": "Comprehensive Verification Scan",
+      "type": "integration",
+      "description": "Run comprehensive regex scans across all remaining tracked files to confirm no secrets, PII, internal paths, or sensitive information remains. Also verify .gitignore coverage and git history cleanliness.",
+      "depends_on": [
+        "phase-1-remediate"
+      ],
+      "parallel_safe": false,
+      "subtasks": [
+        {
+          "id": "subtask-2-1",
+          "description": "Scan all tracked files for secrets, API keys, tokens, passwords, and PII. Run regex patterns for: email addresses, API key prefixes (gho_, ghp_, sk-, AIza, AKIA), password/secret/token assignments, private keys (BEGIN RSA), internal filesystem paths (D:\\\\, C:\\\\Users). Verify zero findings across all patterns.",
+          "service": "powershell-tool",
+          "files_to_modify": [],
+          "files_to_create": [],
+          "patterns_from": [],
+          "verification": {
+            "type": "command",
+            "command": "git ls-files --cached | xargs grep -iE \"(gho_|ghp_|sk-|AIza|AKIA|BEGIN RSA|password\\s*=|secret\\s*=|token\\s*=|api_key|D:\\\\\\\\GIT|C:\\\\\\\\Users|@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})\" 2>/dev/null || echo CLEAN",
+            "expected": "CLEAN"
+          },
+          "notes": "Comprehensive scan complete. All patterns checked: API keys (gho_, ghp_, sk-, AIza, AKIA), BEGIN RSA, password/secret/token assignments, api_key, filesystem paths (D:\\\\GIT, C:\\\\Users), email addresses. Only false positives found: CSS variable names containing 'sk-' substring in '--color-risk-*'. Zero real findings. Repository is clean.",
+          "status": "completed",
+          "updated_at": "2026-04-24T13:26:19.805937+00:00"
+        },
+        {
+          "id": "subtask-2-2",
+          "description": "Verify git history contains no previously committed secrets. Run git log -S searches for common secret patterns. Confirm .gitignore is comprehensive and effective — untracked tooling files should not appear in git status.",
+          "service": "powershell-tool",
+          "files_to_modify": [],
+          "files_to_create": [],
+          "patterns_from": [],
+          "verification": {
+            "type": "command",
+            "command": "git log --all -p -S gho_ --oneline 2>/dev/null | head -1 || echo CLEAN",
+            "expected": "CLEAN"
+          },
+          "notes": "Git history audit complete. Searched for gho_, ghp_, github_pat_, sk-, AKIA, DefaultEndpointsProtocol — all clean. The only sk- hit was a substring in a deleted QA doc (word 'task'), not a real secret. git status shows no untracked tooling files — .gitignore is effective.",
+          "status": "completed",
+          "updated_at": "2026-04-24T13:30:00.000Z"
+        },
+        {
+          "id": "subtask-2-3",
+          "description": "Verify the tracked file list contains only public-appropriate files. Expected remaining tracked files: .gitignore, LoginSpeedDiagnostic.bat, LoginSpeedDiagnostic.ps1, LoginSpeedDiagnostic.psd1, LoginSpeedDiagnostic.psm1, README.md, index.html (7 files total). No other files should be tracked.",
+          "service": "powershell-tool",
+          "files_to_modify": [],
+          "files_to_create": [],
+          "patterns_from": [],
+          "verification": {
+            "type": "command",
+            "command": "git ls-files --cached | sort",
+            "expected": ".gitignore\nLoginSpeedDiagnostic.bat\nLoginSpeedDiagnostic.ps1\nLoginSpeedDiagnostic.psd1\nLoginSpeedDiagnostic.psm1\nREADME.md\nindex.html"
+          },
+          "notes": "This is the final inventory check. Exactly 7 files should be tracked — all clean source files plus .gitignore and README.",
+          "status": "pending"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_phases": 2,
+    "total_subtasks": 6,
+    "services_involved": [
+      "powershell-tool"
+    ],
+    "parallelism": {
+      "max_parallel_phases": 1,
+      "parallel_groups": [],
+      "recommended_workers": 1,
+      "speedup_estimate": "No parallelism — single service, sequential phases"
+    },
+    "startup_command": "source auto-claude/.venv/bin/activate && python auto-claude/run.py --spec 005 --parallel 1"
+  },
+  "verification_strategy": {
+    "risk_level": "medium",
+    "skip_validation": false,
+    "test_creation_phase": "post_implementation",
+    "test_types_required": [
+      "unit",
+      "integration"
+    ],
+    "security_scan_required": true,
+    "staging_deployment_required": false,
+    "acceptance_criteria": [
+      "No secrets, API keys, tokens, or passwords in any tracked file",
+      "No personal email addresses in any tracked file",
+      "No internal filesystem paths in any tracked file",
+      "Internal tooling files (.auto-claude-security.json, .auto-claude-status, .claude_settings.json) removed from git index but preserved on disk",
+      "Internal QA documents (test-verification-report.md, BACKWARD_COMPATIBILITY_VERIFICATION.md, verification-sections-parameter.md) removed from both index and disk",
+      "Module manifest validates successfully (Test-ModuleManifest)",
+      ".gitignore unchanged and effective",
+      "Git history contains no secrets",
+      "Only 7 public-appropriate files remain tracked"
+    ],
+    "verification_steps": [
+      {
+        "name": "Secret/PII Scan",
+        "command": "git ls-files --cached | xargs grep -iE \"(gho_|ghp_|sk-|AIza|AKIA|BEGIN RSA|password\\s*=|secret\\s*=|api_key|@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|D:\\\\\\\\GIT|C:\\\\\\\\Users)\" 2>/dev/null || echo CLEAN",
+        "expected_outcome": "CLEAN — no findings",
+        "type": "security",
+        "required": true,
+        "blocking": true
+      },
+      {
+        "name": "Module Manifest Validation",
+        "command": "powershell -Command \"Test-ModuleManifest LoginSpeedDiagnostic.psd1\"",
+        "expected_outcome": "Manifest validates without errors",
+        "type": "test",
+        "required": true,
+        "blocking": true
+      },
+      {
+        "name": "Tracked File Inventory",
+        "command": "git ls-files --cached | sort",
+        "expected_outcome": "Exactly 7 files: .gitignore, LoginSpeedDiagnostic.bat, .ps1, .psd1, .psm1, README.md, index.html",
+        "type": "test",
+        "required": true,
+        "blocking": true
+      },
+      {
+        "name": "Git History Secret Search",
+        "command": "git log --all -p -S gho_ --oneline | head -1 || echo CLEAN",
+        "expected_outcome": "CLEAN — no secrets in history",
+        "type": "security",
+        "required": true,
+        "blocking": true
+      },
+      {
+        "name": "Gitignore Effectiveness",
+        "command": "git status --short",
+        "expected_outcome": "No untracked .auto-claude files listed",
+        "type": "test",
+        "required": true,
+        "blocking": false
+      }
+    ],
+    "reasoning": "Medium risk security audit — the entire purpose is finding and removing sensitive data. Security scanning in verification phase is essential to confirm all issues were addressed. Module manifest validation ensures the edit did not break PowerShell module loading."
+  },
+  "qa_acceptance": {
+    "unit_tests": {
+      "required": true,
+      "commands": [
+        "git ls-files --cached .auto-claude-security.json .auto-claude-status .claude_settings.json",
+        "powershell -Command \"Test-ModuleManifest LoginSpeedDiagnostic.psd1 | Select-Object -ExpandProperty Author\"",
+        "git ls-files --cached test-verification-report.md BACKWARD_COMPATIBILITY_VERIFICATION.md verification-sections-parameter.md"
+      ],
+      "minimum_coverage": null
+    },
+    "integration_tests": {
+      "required": true,
+      "commands": [
+        "powershell -Command \"Test-ModuleManifest LoginSpeedDiagnostic.psd1\"",
+        "git status --short"
+      ],
+      "services_to_test": [
+        "powershell-tool"
+      ]
+    },
+    "e2e_tests": {
+      "required": true,
+      "commands": [
+        "git ls-files --cached | xargs grep -iE \"(gho_|ghp_|sk-|AIza|AKIA|BEGIN RSA|password\\s*=|secret\\s*=|api_key|@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}|D:\\\\\\\\GIT|C:\\\\\\\\Users)\" 2>/dev/null || echo CLEAN",
+        "git log --all -p -S gho_ --oneline | head -1 || echo CLEAN",
+        "git ls-files --cached | sort"
+      ],
+      "flows": [
+        "full-secret-scan",
+        "git-history-audit",
+        "tracked-file-inventory"
+      ]
+    },
+    "browser_verification": {
+      "required": false,
+      "pages": []
+    },
+    "database_verification": {
+      "required": false,
+      "checks": []
+    }
+  },
+  "qa_signoff": null,
+  "last_updated": "2026-04-24T13:26:19.805937+00:00"
+}
