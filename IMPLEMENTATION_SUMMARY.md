@@ -17,9 +17,9 @@ All phases complete. All acceptance criteria met.
 **Files Modified:** `LoginSpeedDiagnostic.psm1`
 
 **Changes:**
-- Added timestamp generation using `Get-Date -Format "yyyyMMdd_HHmmss"`
+- Added timestamp generation using `Get-Date -Format "yyyy-MM-dd_HHmmss"`
 - Changed OutputPath parameter from required to optional
-- Default filename format: `LoginSpeedReport_YYYYMMDD_HHmmss.txt`
+- Default filename format: `LoginSpeedReport_YYYY-MM-DD_HHmmss.txt`
 - Implemented _latest copy functionality:
   - `LoginSpeedReport_latest.txt` - Copy of most recent text report
   - `LoginSpeedReport_latest_errors.json` - Copy of most recent JSON error log
@@ -35,9 +35,9 @@ All phases complete. All acceptance criteria met.
 **Files Modified:** `LoginSpeedDiagnostic.ps1`
 
 **Changes:**
-- Added timestamp generation using `Get-Date -Format "yyyyMMdd_HHmmss"`
+- Added timestamp generation using `Get-Date -Format "yyyy-MM-dd_HHmmss"`
 - Changed OutputPath parameter from required to optional
-- Default filename format: `LoginSpeedReport_YYYYMMDD_HHmmss.txt`
+- Default filename format: `LoginSpeedReport_YYYY-MM-DD_HHmmss.txt`
 - Implemented _latest copy functionality:
   - `LoginSpeedReport_latest.txt` - Copy of most recent text report
   - `LoginSpeedReport_latest.html` - Copy of most recent HTML report
@@ -93,9 +93,9 @@ During verification setup, discovered that the _latest copy functionality was MI
 
 | Criterion | Status | Implementation |
 |-----------|--------|----------------|
-| Reports saved with timestamp in filename: `LoginSpeedReport_YYYY-MM-DD_HHmmss.txt` | ✅ | Timestamp format: `YYYYMMDD_HHmmss` |
-| JSON error log files similarly timestamped | ✅ | `LoginSpeedReport_YYYYMMDD_HHmmss_errors.json` |
-| HTML reports similarly timestamped (.ps1 only) | ✅ | `LoginSpeedReport_YYYYMMDD_HHmmss.html` |
+| Reports saved with timestamp in filename: `LoginSpeedReport_YYYY-MM-DD_HHmmss.txt` | ✅ | Timestamp format: `YYYY-MM-DD_HHmmss` |
+| JSON error log files similarly timestamped | ✅ | `LoginSpeedReport_YYYY-MM-DD_HHmmss_errors.json` |
+| HTML reports similarly timestamped (.ps1 only) | ✅ | `LoginSpeedReport_YYYY-MM-DD_HHmmss.html` |
 | `-OutputPath` parameter allows custom output directory | ✅ | Works with both directories and file paths |
 | `LoginSpeedReport_latest.txt` copy maintained | ✅ | Created after each run (both .psm1 and .ps1) |
 | `LoginSpeedReport_latest_errors.json` copy maintained | ✅ | Created after each run (both .psm1 and .ps1) |
@@ -136,9 +136,9 @@ During verification setup, discovered that the _latest copy functionality was MI
 After running the diagnostic tool, the following files are created:
 
 ### Every Run Creates:
-- `LoginSpeedReport_YYYYMMDD_HHmmss.txt` - Timestamped text report
-- `LoginSpeedReport_YYYYMMDD_HHmmss_errors.json` - Timestamped error log
-- `LoginSpeedReport_YYYYMMDD_HHmmss.html` - Timestamped HTML report (.ps1 only)
+- `LoginSpeedReport_YYYY-MM-DD_HHmmss.txt` - Timestamped text report
+- `LoginSpeedReport_YYYY-MM-DD_HHmmss_errors.json` - Timestamped error log
+- `LoginSpeedReport_YYYY-MM-DD_HHmmss.html` - Timestamped HTML report (.ps1 only)
 
 ### Always Updated:
 - `LoginSpeedReport_latest.txt` - Copy of most recent text report
@@ -237,7 +237,7 @@ For production deployment, run the verification tests in `VERIFICATION_TESTS.md`
 
 ## Notes
 
-- The timestamp format uses `yyyyMMdd_HHmmss` (e.g., `20260424_143022`) for sortability
+- The timestamp format uses `yyyy-MM-dd_HHmmss` (e.g., `20260424_143022`) for sortability
 - All encoding remains UTF-8 as per original implementation
 - The -Force flag on Copy-Item ensures _latest files are always updated
 - Directory creation is handled by existing Split-Path logic

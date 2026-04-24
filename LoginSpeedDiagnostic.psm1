@@ -153,7 +153,7 @@ function Invoke-LoginSpeedDiagnostic {
       - DNS / DC discovery delays
 
 .PARAMETER OutputPath
-    Path to write the report file. Defaults to .\LoginSpeedReport_YYYYMMDD_HHmmss.txt
+    Path to write the report file. Defaults to .\LoginSpeedReport_YYYY-MM-DD_HHmmss.txt
 
 .PARAMETER Quick
     Run in quick mode, skipping time-intensive checks
@@ -177,9 +177,32 @@ function Invoke-LoginSpeedDiagnostic {
     )
 
     # ─── Generate Timestamped Output Path ───────────────────────────────────────
+    $timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+
     if ([string]::IsNullOrEmpty($OutputPath)) {
-        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        # No custom path - use default timestamped filename
         $OutputPath = ".\LoginSpeedReport_$timestamp.txt"
+    } else {
+        # Custom path provided - check if directory or file
+        if (Test-Path -Path $OutputPath -PathType Container) {
+            # It's a directory - append timestamped filename
+            $OutputPath = Join-Path $OutputPath "LoginSpeedReport_$timestamp.txt"
+        } elseif ($OutputPath -match '^.*\\$') {
+            # Ends with backslash - treat as directory
+            $OutputPath = Join-Path $OutputPath "LoginSpeedReport_$timestamp.txt"
+        } else {
+            # It's a file path - insert timestamp before extension
+            $directory = Split-Path $OutputPath -Parent
+            $filename = Split-Path $OutputPath -Leaf
+            $extension = [System.IO.Path]::GetExtension($filename)
+            $basename = [System.IO.Path]::GetFileNameWithoutExtension($filename)
+
+            if ([string]::IsNullOrEmpty($directory)) {
+                $directory = "."
+            }
+
+            $OutputPath = Join-Path $directory "${basename}_${timestamp}${extension}"
+        }
     }
 
     # ─── Encoding ────────────────────────────────────────────────────────────────

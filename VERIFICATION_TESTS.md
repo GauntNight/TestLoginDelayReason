@@ -117,7 +117,7 @@ $reports | ForEach-Object { Write-Host "  - $($_.Name)" }
 
 **Expected Results:**
 - ✅ Report saved in .\TestReports\ directory
-- ✅ Filename has timestamp: LoginSpeedReport_YYYYMMDD_HHmmss.txt
+- ✅ Filename has timestamp: LoginSpeedReport_YYYY-MM-DD_HHmmss.txt
 - ✅ _latest copy also created in .\TestReports\
 
 ---
@@ -165,7 +165,7 @@ if ($jsonFiles.Count -gt 0) {
 ```
 
 **Expected Results:**
-- ✅ JSON file has timestamp in filename: LoginSpeedReport_YYYYMMDD_HHmmss_errors.json
+- ✅ JSON file has timestamp in filename: LoginSpeedReport_YYYY-MM-DD_HHmmss_errors.json
 - ✅ LoginSpeedReport_latest_errors.json exists
 - ✅ JSON contains metadata and error information
 
@@ -192,7 +192,7 @@ if ($htmlFiles.Count -gt 0) {
 ```
 
 **Expected Results:**
-- ✅ HTML file has timestamp in filename: LoginSpeedReport_YYYYMMDD_HHmmss.html
+- ✅ HTML file has timestamp in filename: LoginSpeedReport_YYYY-MM-DD_HHmmss.html
 - ✅ LoginSpeedReport_latest.html exists
 - ✅ HTML file can be opened in browser and displays correctly
 
@@ -352,9 +352,9 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 
 After running all tests, verify:
 
-- [ ] Reports saved with timestamp format: LoginSpeedReport_YYYYMMDD_HHmmss.txt
-- [ ] JSON error logs similarly timestamped: LoginSpeedReport_YYYYMMDD_HHmmss_errors.json
-- [ ] HTML reports similarly timestamped (in .ps1): LoginSpeedReport_YYYYMMDD_HHmmss.html
+- [ ] Reports saved with timestamp format: LoginSpeedReport_YYYY-MM-DD_HHmmss.txt
+- [ ] JSON error logs similarly timestamped: LoginSpeedReport_YYYY-MM-DD_HHmmss_errors.json
+- [ ] HTML reports similarly timestamped (in .ps1): LoginSpeedReport_YYYY-MM-DD_HHmmss.html
 - [ ] LoginSpeedReport_latest.txt copy maintained
 - [ ] LoginSpeedReport_latest_errors.json copy maintained
 - [ ] LoginSpeedReport_latest.html copy maintained (.ps1 only)
