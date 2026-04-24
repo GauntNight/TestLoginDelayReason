@@ -1132,6 +1132,11 @@ function Invoke-LoginSpeedDiagnostic {
     $script:ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
     Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
 
+    # Create _latest copy for quick access
+    $LatestPath = Join-Path (Split-Path $OutputPath -Parent) "LoginSpeedReport_latest.txt"
+    Copy-Item -Path $OutputPath -Destination $LatestPath -Force
+    Write-Host "Latest copy written to: $LatestPath" -ForegroundColor Green
+
     # ─── JSON Error Log Export ─────────────────────────────────────────────────
     $JsonPath = $OutputPath -replace '\.txt$', '_errors.json'
     try {
@@ -1150,6 +1155,10 @@ function Invoke-LoginSpeedDiagnostic {
         }
         $jsonExport | ConvertTo-Json -Depth 4 | Out-File -FilePath $JsonPath -Encoding UTF8 -Force
         Write-Host "JSON error log written to: $JsonPath" -ForegroundColor Green
+
+        # Create _latest copy for quick access
+        $LatestJsonPath = Join-Path (Split-Path $JsonPath -Parent) "LoginSpeedReport_latest_errors.json"
+        Copy-Item -Path $JsonPath -Destination $LatestJsonPath -Force
     } catch {
         Write-Host "Could not write JSON error log to ${JsonPath}: $_" -ForegroundColor Yellow
     }

@@ -2212,6 +2212,11 @@ $SectionStatus["12. Error Log"] = "Completed"
 $ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
 Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
 
+# Create _latest copy for quick access
+$LatestPath = Join-Path (Split-Path $OutputPath -Parent) "LoginSpeedReport_latest.txt"
+Copy-Item -Path $OutputPath -Destination $LatestPath -Force
+Write-Host "Latest copy written to: $LatestPath" -ForegroundColor Green
+
 # ─── Generate HTML Report (unless -NoHtml specified) ───────────────────────
 if (-not $NoHtml) {
     $HtmlPath = $OutputPath -replace '\.txt$', '.html'
@@ -2229,6 +2234,10 @@ if (-not $NoHtml) {
 
         $htmlContent | Out-File -FilePath $HtmlPath -Encoding UTF8 -Force
         Write-Host "HTML report written to: $HtmlPath" -ForegroundColor Green
+
+        # Create _latest copy for quick access
+        $LatestHtmlPath = Join-Path (Split-Path $HtmlPath -Parent) "LoginSpeedReport_latest.html"
+        Copy-Item -Path $HtmlPath -Destination $LatestHtmlPath -Force
     } catch {
         Write-Host "Warning: Could not generate HTML report: $_" -ForegroundColor Yellow
     }
@@ -2252,6 +2261,10 @@ try {
     }
     $jsonExport | ConvertTo-Json -Depth 4 | Out-File -FilePath $JsonPath -Encoding UTF8 -Force
     Write-Host "JSON error log written to: $JsonPath" -ForegroundColor Green
+
+    # Create _latest copy for quick access
+    $LatestJsonPath = Join-Path (Split-Path $JsonPath -Parent) "LoginSpeedReport_latest_errors.json"
+    Copy-Item -Path $JsonPath -Destination $LatestJsonPath -Force
 } catch {
     Write-Host "Could not write JSON error log to ${JsonPath}: $_" -ForegroundColor Yellow
 }
