@@ -9,7 +9,7 @@
     GUID = 'a1b2c3d4-e5f6-4789-a0b1-c2d3e4f5a6b7'
 
     # Author of this module
-    Author = 'rob.peterscheck@gmail.com'
+    Author = 'GauntNight'
 
     # Company or vendor of this module
     CompanyName = ''
