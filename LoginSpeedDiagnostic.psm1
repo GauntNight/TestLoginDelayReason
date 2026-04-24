@@ -153,7 +153,7 @@ function Invoke-LoginSpeedDiagnostic {
       - DNS / DC discovery delays
 
 .PARAMETER OutputPath
-    Path to write the report file. Defaults to .\LoginSpeedReport.txt
+    Path to write the report file. Defaults to .\LoginSpeedReport_YYYYMMDD_HHmmss.txt
 
 .PARAMETER Quick
     Run in quick mode, skipping time-intensive checks
@@ -171,10 +171,16 @@ function Invoke-LoginSpeedDiagnostic {
 
     [CmdletBinding()]
     param(
-        [string]$OutputPath = ".\LoginSpeedReport.txt",
+        [string]$OutputPath,
         [switch]$Quick,
         [int[]]$Sections
     )
+
+    # ─── Generate Timestamped Output Path ───────────────────────────────────────
+    if ([string]::IsNullOrEmpty($OutputPath)) {
+        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $OutputPath = ".\LoginSpeedReport_$timestamp.txt"
+    }
 
     # ─── Encoding ────────────────────────────────────────────────────────────────
     # External commands output in the system's OEM codepage (e.g., 932/Shift-JIS on
