@@ -19,7 +19,7 @@ Double-click `LoginSpeedDiagnostic.bat` or run it from a Command Prompt:
 LoginSpeedDiagnostic.bat
 ```
 
-The `.bat` launcher automatically handles PowerShell execution policy (`-ExecutionPolicy Bypass`) and saves the report to `LoginSpeedReport.txt` in the same directory.
+The `.bat` launcher automatically handles PowerShell execution policy (`-ExecutionPolicy Bypass`) and saves the report to a timestamped file (e.g., `LoginSpeedReport_2026-04-24_143022.txt`) in the same directory. A copy is also saved as `LoginSpeedReport_latest.txt` for easy access to the most recent report.
 
 ### Method 2: Run PowerShell Script Directly
 
@@ -30,7 +30,12 @@ The `.bat` launcher automatically handles PowerShell execution policy (`-Executi
 To save the report to a custom location:
 
 ```powershell
+# Specify a directory - timestamped files will be created there
+.\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp"
+
+# Specify a custom filename - timestamp will be inserted before extension
 .\LoginSpeedDiagnostic.ps1 -OutputPath "C:\Temp\MyReport.txt"
+# Creates: C:\Temp\MyReport_2026-04-24_143022.txt and MyReport_latest.txt
 ```
 
 If execution policy blocks the script, run:
@@ -42,6 +47,25 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\LoginSpeedDiagnostic.p
 ### Running as Administrator
 
 For full diagnostic data, right-click the `.bat` file and select **Run as administrator**, or launch an elevated PowerShell/CMD window before running the script.
+
+## Report Files and Versioning
+
+The tool automatically versions report files with timestamps to preserve diagnostic history:
+
+- **Timestamped reports**: Each run creates files with the format `LoginSpeedReport_YYYY-MM-DD_HHmmss.txt` (e.g., `LoginSpeedReport_2026-04-24_143022.txt`)
+- **Latest copy**: A `LoginSpeedReport_latest.txt` file is always maintained, containing the most recent diagnostic results for quick access
+- **No overwriting**: Previous reports are never overwritten, allowing you to compare results across multiple diagnostic runs
+- **Output directory**: Use `-OutputPath` to specify where reports are saved:
+  - **Directory path**: Reports are created in the specified directory with timestamped names
+  - **File path**: The timestamp is inserted before the file extension, and a `_latest` copy is created alongside
+
+**Example**: Running the diagnostic three times creates:
+```
+LoginSpeedReport_2026-04-24_140512.txt
+LoginSpeedReport_2026-04-24_141823.txt
+LoginSpeedReport_2026-04-24_143022.txt
+LoginSpeedReport_latest.txt  (copy of the most recent report)
+```
 
 ## What the Report Covers
 
@@ -67,7 +91,7 @@ The report contains 11 diagnostic sections:
 
 - **Non-domain machines get partial results.** Sections 3–6 (DNS/DC discovery, network connectivity, GPO processing, logon events) return N/A on machines not joined to an Active Directory domain. `nltest.exe` and `gpresult.exe` require domain membership.
 
-- **Report file is overwritten without prompting.** The output file (default: `LoginSpeedReport.txt`) is silently overwritten each time the script runs. Rename or move previous reports if you need to keep them.
+- **Report files are automatically versioned.** Each run creates a timestamped report file (e.g., `LoginSpeedReport_2026-04-24_143022.txt`), preserving previous diagnostics for comparison. A `_latest` copy is always maintained for quick access to the most recent results.
 
 - **NETLOGON log may not exist.** The debug log at `%SystemRoot%\debug\netlogon.log` is only present if NETLOGON debug logging has been enabled. To enable it:
   ```cmd

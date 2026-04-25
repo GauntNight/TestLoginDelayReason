@@ -153,7 +153,7 @@ function Invoke-LoginSpeedDiagnostic {
       - DNS / DC discovery delays
 
 .PARAMETER OutputPath
-    Path to write the report file. Defaults to .\LoginSpeedReport.txt
+    Path to write the report file. Defaults to .\LoginSpeedReport_YYYY-MM-DD_HHmmss.txt
 
 .PARAMETER Quick
     Run in quick mode, skipping time-intensive checks
@@ -171,10 +171,39 @@ function Invoke-LoginSpeedDiagnostic {
 
     [CmdletBinding()]
     param(
-        [string]$OutputPath = ".\LoginSpeedReport.txt",
+        [string]$OutputPath,
         [switch]$Quick,
         [int[]]$Sections
     )
+
+    # ─── Generate Timestamped Output Path ───────────────────────────────────────
+    $timestamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
+
+    if ([string]::IsNullOrEmpty($OutputPath)) {
+        # No custom path - use default timestamped filename
+        $OutputPath = ".\LoginSpeedReport_$timestamp.txt"
+    } else {
+        # Custom path provided - check if directory or file
+        if (Test-Path -Path $OutputPath -PathType Container) {
+            # It's a directory - append timestamped filename
+            $OutputPath = Join-Path $OutputPath "LoginSpeedReport_$timestamp.txt"
+        } elseif ($OutputPath -match '^.*\\$') {
+            # Ends with backslash - treat as directory
+            $OutputPath = Join-Path $OutputPath "LoginSpeedReport_$timestamp.txt"
+        } else {
+            # It's a file path - insert timestamp before extension
+            $directory = Split-Path $OutputPath -Parent
+            $filename = Split-Path $OutputPath -Leaf
+            $extension = [System.IO.Path]::GetExtension($filename)
+            $basename = [System.IO.Path]::GetFileNameWithoutExtension($filename)
+
+            if ([string]::IsNullOrEmpty($directory)) {
+                $directory = "."
+            }
+
+            $OutputPath = Join-Path $directory "${basename}_${timestamp}${extension}"
+        }
+    }
 
     # ─── Encoding ────────────────────────────────────────────────────────────────
     # External commands output in the system's OEM codepage (e.g., 932/Shift-JIS on
@@ -1126,6 +1155,11 @@ function Invoke-LoginSpeedDiagnostic {
     $script:ReportLines | Out-File -FilePath $OutputPath -Encoding UTF8 -Force
     Write-Host "`nReport written to: $OutputPath" -ForegroundColor Green
 
+    # Create _latest copy for quick access
+    $LatestPath = Join-Path (Split-Path $OutputPath -Parent) "LoginSpeedReport_latest.txt"
+    Copy-Item -Path $OutputPath -Destination $LatestPath -Force
+    Write-Host "Latest copy written to: $LatestPath" -ForegroundColor Green
+
     # ─── JSON Error Log Export ─────────────────────────────────────────────────
     $JsonPath = $OutputPath -replace '\.txt$', '_errors.json'
     try {
@@ -1144,6 +1178,10 @@ function Invoke-LoginSpeedDiagnostic {
         }
         $jsonExport | ConvertTo-Json -Depth 4 | Out-File -FilePath $JsonPath -Encoding UTF8 -Force
         Write-Host "JSON error log written to: $JsonPath" -ForegroundColor Green
+
+        # Create _latest copy for quick access
+        $LatestJsonPath = Join-Path (Split-Path $JsonPath -Parent) "LoginSpeedReport_latest_errors.json"
+        Copy-Item -Path $JsonPath -Destination $LatestJsonPath -Force
     } catch {
         Write-Host "Could not write JSON error log to ${JsonPath}: $_" -ForegroundColor Yellow
     }
